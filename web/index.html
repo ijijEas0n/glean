@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f7f7f5">
+  <title>拾取 · 收集和阅读</title>
+  <link rel="stylesheet" href="/style.css?v=20261016b">
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#/" aria-label="拾取首页"><span class="brand-icon">↗</span><span>拾取</span></a>
+    <nav class="nav" aria-label="主导航">
+      <a href="#/" id="navCollect" class="nav-link"><span>收集</span><b id="jobBadge" class="nav-badge" hidden></b></a>
+      <a href="#/library" id="navLibrary" class="nav-link">内容库</a>
+      <a href="#/accounts" id="navCreators" class="nav-link">博主</a>
+      <a href="#/settings" id="navSettings" class="nav-link">设置<i class="alert-dot" id="settingsDot" hidden></i></a>
+    </nav>
+    <div class="sidebar-foot">本地保存 · 随时可读</div>
+  </aside>
+
+  <main class="main" id="main">
+    <section class="page collect-page" id="pageCollect" hidden>
+      <h1>收集</h1>
+      <form id="collectForm" class="collect-box">
+        <textarea id="urlInput" rows="3" placeholder="粘贴链接" spellcheck="false"></textarea>
+        <div class="collect-meta" id="collectMeta" hidden></div>
+        <div class="collect-actions">
+          <span class="collect-count" id="collectCount"></span>
+          <div class="gear-wrap"><button class="icon-button" type="button" id="gearButton" aria-label="本次设置" title="本次设置">⚙</button>
+            <div class="popover collect-pop" id="collectPopover" hidden>
+              <label class="switch-row">转成文字<input id="onceTranscribe" type="checkbox"><span class="switch"></span></label>
+              <label class="switch-row">保留视频<input id="onceKeep" type="checkbox"><span class="switch"></span></label>
+            </div>
+          </div>
+          <button class="button primary" id="submitButton" type="submit">保存 0 条</button>
+        </div>
+      </form>
+
+      <section class="inline-preview" id="inlinePreview" hidden>
+        <div class="preview-head"><div><h2 id="previewTitle">勾选要保存的作品</h2><span id="previewTotal" class="muted"></span></div>
+          <div class="preview-head-actions"><label class="switch-row compact">只选没存的<input id="onlyNew" type="checkbox"><span class="switch"></span></label><button class="button secondary small" id="refreshPreview" type="button">刷新</button><button class="button secondary small" id="closePreview" type="button">关闭</button></div></div>
+        <div id="previewProblem" class="problem-line" hidden></div>
+        <div id="previewGrid" class="preview-grid"></div>
+        <div class="preview-more"><button class="button secondary" id="loadMore" type="button" hidden>加载更多</button></div>
+      </section>
+
+      <div class="collect-lower" id="collectLower">
+        <div class="collect-left">
+          <section class="home-section"><div class="section-heading"><h2>进行中</h2><span id="activeCount" class="muted"></span></div><div id="activeJobs" class="job-list"></div></section>
+          <section class="home-section"><div class="section-heading"><h2>最近保存</h2><a href="#/library" class="quiet-link">全部内容</a></div><div id="recentItems" class="recent-list"></div></section>
+        </div>
+        <aside class="favorites-card"><div class="section-heading"><h2>收藏夹</h2><button class="button secondary small" id="syncFavorites">同步</button></div>
+          <div class="muted" id="favoriteLast"></div><button class="problem-link" id="favoriteRetry" hidden></button>
+        </aside>
+      </div>
+      <div class="preview-shortcuts" id="previewShortcuts" hidden><a href="#/" id="shortcutJobs">进行中 <span id="shortcutJobCount"></span></a><a href="#/library">最近保存</a><button id="shortcutFavorites">收藏夹 · 同步</button></div>
+    </section>
+
+    <section class="page library-page" id="pageLibrary" hidden>
+      <div class="page-heading"><div class="title-row"><h1>内容库</h1><span id="libraryTotal" class="muted"></span></div>
+        <div class="heading-tools"><input id="searchInput" class="input search-input" type="search" placeholder="搜索"><button id="multiToggle" class="button secondary">多选</button><button id="filterButton" class="button secondary">筛选</button>
+          <div id="filterPopover" class="popover filter-popover" hidden><b>筛选</b><label>博主<select id="authorFilter"><option value="">全部</option></select></label><label>平台<select id="platformFilter"><option value="">全部</option><option value="douyin">抖音</option><option value="xiaohongshu">小红书</option><option value="twitter">Twitter</option></select></label><label>分组<select id="collectionFilter"><option value="">全部</option></select></label></div>
+        </div>
+      </div>
+      <div class="tabs" id="libraryTabs"><button data-tab="all" class="is-active">全部</button><button data-tab="favorites">收藏夹</button><button data-tab="missing">缺文字</button></div>
+      <div id="authorChips" class="author-chips" aria-label="按博主筛选" hidden></div>
+      <div class="collection-copy-row"><div id="collectionChips" class="collection-chips"></div><button id="copyFiltered" class="button primary small" hidden></button></div>
+      <div id="libraryGrid" class="library-grid"></div>
+      <div class="load-row"><button id="libraryMore" class="button secondary" hidden>加载更多</button></div>
+      <div id="libraryEmpty" class="empty-state" hidden>这里还没有内容。</div>
+      <div class="multi-bar" id="multiBar" hidden><b id="selectedCount">已选 0 条</b><button class="button primary" id="copySelected">复制给 AI</button><button class="button secondary" id="multiMore">⋯</button>
+        <div class="popover more-pop" id="multiPopover" hidden><button id="deleteSelected">删除选中内容</button><button id="leaveMulti">退出多选</button></div>
+      </div>
+    </section>
+
+    <section class="page creators-page" id="pageCreators" hidden>
+      <div class="page-heading"><h1>博主</h1><button id="addCreator" class="button secondary">＋ 添加</button></div>
+      <div class="creator-add" id="creatorAdd" hidden><input class="input" id="creatorUrl" placeholder="粘贴主页链接"><input class="input" id="creatorName" placeholder="名字（可留空）"><button class="button primary" id="saveCreator">添加</button><button class="button secondary" id="cancelCreator">取消</button></div>
+      <h2 class="subheading">我的</h2><div id="creatorList" class="creator-list"></div><div id="creatorEmpty" class="muted" hidden>还没有博主，点右上角添加。</div>
+    </section>
+
+    <section class="page settings-page" id="pageSettings" hidden>
+      <h1>设置</h1>
+      <div class="settings-column">
+        <div class="settings-card">
+          <label class="switch-row">转成文字<input id="settingTranscribe" type="checkbox"><span class="switch"></span></label>
+          <label class="switch-row">保留视频<input id="settingKeep" type="checkbox"><span class="switch"></span></label>
+          <label class="setting-select">转写服务<select id="settingEngine" class="input"><option value="volcengine">火山</option><option value="aliyun">阿里云</option><option value="local">本机</option></select></label>
+          <label class="switch-row">本机兜底<input id="settingFallback" type="checkbox"><span class="switch"></span></label>
+        </div>
+        <div class="settings-card key-card">
+          <label>TikHub<input id="keyTikhub" class="input" type="password" placeholder="未填写" autocomplete="off"><span id="flagTikhub" class="key-flag"></span></label>
+          <label>火山<input id="keyVolc" class="input" type="password" placeholder="未填写" autocomplete="off"><span id="flagVolc" class="key-flag"></span></label>
+          <label>阿里云<input id="keyAliyun" class="input" type="password" placeholder="未填写" autocomplete="off"><span id="flagAliyun" class="key-flag"></span></label>
+          <label>代理<input id="proxyInput" class="input" placeholder="自动"></label>
+        </div>
+        <div id="settingsProblems" class="settings-problems" hidden></div>
+      </div>
+    </section>
+
+    <section class="page detail-page" id="pageDetail" hidden>
+      <div class="detail-toolbar"><button class="quiet-link" id="detailBack">← 内容库</button><span></span><button class="button primary" id="copyOne">复制给 AI</button><div class="gear-wrap"><button class="button secondary" id="detailMore">⋯</button><div class="popover detail-menu" id="detailMenu" hidden><button data-action="text">复制正文</button><button data-action="transcript">复制文字稿</button><a id="originLink" target="_blank" rel="noreferrer">打开原链接</a><button data-action="folder">打开文件夹</button><button data-action="raw">接口原始记录</button></div></div></div>
+      <article class="detail-content"><h1 id="detailTitle"></h1><div id="detailBy" class="detail-by"></div>
+        <section id="detailMedia" class="detail-panel media-panel"></section><section class="detail-section"><h2>正文</h2><div id="detailText" class="detail-panel"></div></section><section class="detail-section"><h2>文字稿</h2><section id="detailTranscript" class="detail-panel"></section></section><div id="detailCompleteness" class="problem-line" hidden></div><pre id="detailRaw" hidden></pre></article>
+    </section>
+  </main>
+  <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+  <script src="/app.js?v=20261016b"></script>
+</body>
+</html>

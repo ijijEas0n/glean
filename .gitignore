@@ -1,0 +1,12 @@
+.env
+library/
+.runtime/
+.fixtures/
+.backups/
+_design/
+*.bak*
+__pycache__/
+*.pyc
+.DS_Store
+._*
+*.log
