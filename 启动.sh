@@ -28,6 +28,20 @@ if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
   exit 0
 fi
 
+# 端口检查用 lsof，确认服务起来用 curl。缺了就直接失败，
+# 避免把「命令不存在」误看成「端口空闲」或「服务没起来」。
+missing=""
+command -v curl >/dev/null 2>&1 || missing="${missing} curl"
+command -v lsof >/dev/null 2>&1 || missing="${missing} lsof"
+if [ -n "$missing" ]; then
+  echo "✗ 缺少命令:${missing}"
+  echo "  curl：确认 http://$HOST:$PORT/api/status 已经可访问。"
+  echo "  lsof：判断端口 $PORT 是否已被占用。"
+  echo "  Debian/Ubuntu：sudo apt-get install -y curl lsof"
+  echo "  macOS：通常已随系统提供；缺失时 brew install curl lsof"
+  exit 1
+fi
+
 # 端口被占：先看是不是我们自己
 if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "✗ 端口 $PORT 已被占用："
@@ -43,9 +57,14 @@ if [ "${1:-}" = "--foreground" ]; then
   exec "$PYTHON" -u "$ROOT/server/main.py" --host "$HOST" --port "$PORT"
 fi
 
-# 日志超过 5MB 就轮转一次，免得无限增长
-if [ -f "$LOG" ] && [ "$(stat -f%z "$LOG" 2>/dev/null || echo 0)" -gt 5242880 ]; then
-  mv "$LOG" "$LOG.1"
+# 日志超过 5MB 就轮转一次。用 wc -c 读字节数：
+# macOS 的 stat -f%z 在 Linux 上不可用，失败后轮转会静默失效。
+if [ -f "$LOG" ]; then
+  log_bytes=$(wc -c < "$LOG")
+  log_bytes=${log_bytes//[[:space:]]/}
+  if [ "$log_bytes" -gt 5242880 ]; then
+    mv "$LOG" "$LOG.1"
+  fi
 fi
 
 nohup "$PYTHON" -u "$ROOT/server/main.py" --host "$HOST" --port "$PORT" >"$LOG" 2>&1 &
