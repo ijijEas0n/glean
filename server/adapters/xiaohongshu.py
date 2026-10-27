@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit
 
 from ..resolver import Resolved
 from ..tikhub import TikHubError, data_of, get
@@ -33,6 +34,11 @@ VIDEO_DETAIL_PATH = "/api/v1/xiaohongshu/app_v2/get_video_note_detail"
 IMAGE_DETAIL_PATH = "/api/v1/xiaohongshu/app_v2/get_image_note_detail"
 USER_POSTS_PATH = "/api/v1/xiaohongshu/app_v2/get_user_posted_notes"
 USER_INFO_PATH = "/api/v1/xiaohongshu/web_v3/fetch_user_info"
+
+# 已确认这两家视频 CDN 同 host 的 443 可用。部分 fake-ip/代理环境下
+# TikHub 给的 http://…:80 会一直卡到下载超时（默认 120s，再乘代理+直连）。
+# 只用「相等或点分后缀」匹配，避免 notxhscdn.com / xhscdn.com.example.org 被误升级。
+_XHS_HTTPS_CDN_DOMAINS = ("rednotecdn.com", "xhscdn.com")
 
 
 def _pick(row: dict[str, Any], *keys: str, default: Any = None) -> Any:
@@ -99,8 +105,72 @@ def _image_urls(note: dict[str, Any]) -> list[str]:
     return rows
 
 
+def _is_xhs_https_cdn(host: str) -> bool:
+    """host 是否为 rednotecdn.com / xhscdn.com 或其子域名。"""
+    return any(host == domain or host.endswith("." + domain) for domain in _XHS_HTTPS_CDN_DOMAINS)
+
+
+def _netloc_for_https(netloc: str, port: int | None) -> str | None:
+    """换成 https 时用的 netloc。显式 80 端口去掉；没法安全改就返回 None。"""
+    if "@" in netloc or netloc.startswith("["):
+        return None
+    if port is None:
+        # `host:` 这种空端口不是默认 80，原样留下，避免改成一个坏地址。
+        if ":" in netloc:
+            return None
+        return netloc
+    host, sep, port_text = netloc.rpartition(":")
+    if not sep or not host or not port_text:
+        return None
+    try:
+        if int(port_text) != 80:
+            return None
+    except ValueError:
+        return None
+    return host
+
+
+def normalize_xhs_video_url(url: str) -> str:
+    """把小红书视频 CDN 的 http 升级为 https。
+
+    只处理 rednotecdn.com / xhscdn.com 及其子域名。已是 https 的地址原样返回；
+    path、query、片段和签名逐字保留，不解码再编码。显式 :80（含 :0080）会去掉，
+    其他端口、用户信息、非法端口一律不动。
+
+    不把原 HTTP 留在候选里：下载再退回这条 HTTP 会重新卡在 80 端口的长超时上。
+    其他候选（含升级后的备用 HTTPS）仍按原顺序继续试。不关闭 TLS 校验。
+    """
+    if not isinstance(url, str) or not url:
+        return url
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    if parts.scheme != "http":
+        return url
+    if parts.username is not None or parts.password is not None:
+        return url
+    host = (parts.hostname or "").rstrip(".").lower()
+    if not _is_xhs_https_cdn(host):
+        return url
+    try:
+        port = parts.port
+    except ValueError:
+        return url
+    if port not in (None, 80):
+        return url
+    netloc = _netloc_for_https(parts.netloc, port)
+    if netloc is None:
+        return url
+    return parts._replace(scheme="https", netloc=netloc).geturl()
+
+
 def _video_candidates(note: dict[str, Any]) -> list[str]:
-    """H.264 优先：转写要用 ffmpeg 读音频，高压缩编码容易失败。"""
+    """H.264 优先：转写要用 ffmpeg 读音频，高压缩编码容易失败。
+
+    收集完再升级协议、再去重。同一条资源经常同时给 HTTP 主地址和 HTTPS
+    备用地址，升级后才能并成一条，且不会把原 HTTP 留进下载循环。
+    """
     media = ((note.get("video_info_v2") or {}).get("media") or {})
     streams = media.get("stream") or {}
     if not isinstance(streams, dict):
@@ -121,7 +191,7 @@ def _video_candidates(note: dict[str, Any]) -> list[str]:
             for candidate in [variant.get("master_url"), *(variant.get("backup_urls") or [])]:
                 if isinstance(candidate, str) and candidate.startswith("http") and candidate not in rows:
                     rows.append(candidate)
-    return normalized_media_candidates(rows)
+    return normalized_media_candidates([normalize_xhs_video_url(url) for url in rows])
 
 
 def _duration_seconds(note: dict[str, Any]) -> float | None:
