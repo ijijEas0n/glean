@@ -38,3 +38,15 @@
 .viral-advanced fieldset { margin-top: 16px; }
 .viral-advanced label { flex: 1 1 120px; max-width: 160px; font-size: 13px; }
 #viralCounts { font-weight: 600; }
+
+.viral-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:12px;margin:14px 0 8px}
+.viral-grid .preview-card{cursor:pointer;text-align:left;border:1px solid #c6c6c2;border-radius:8px;background:#fff;overflow:hidden;padding:0;min-width:0;display:flex;flex-direction:column}
+.viral-grid .preview-card.is-selected{border:2px solid var(--accent);box-shadow:0 0 0 1px #3169f522}
+.viral-grid .preview-cover{aspect-ratio:3/4;width:100%;object-fit:cover;background:#e7e7e5;display:block}
+.viral-grid .viral-card-body{padding:7px 8px 9px;display:grid;gap:3px;min-width:0}
+.viral-grid .viral-card-title{font-size:12px;font-weight:600;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.7em}
+.viral-grid .viral-card-meta{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.viral-grid .viral-card-stats{font-size:11px;color:#555;display:flex;flex-wrap:wrap;gap:6px}
+.viral-grid .preview-card.is-disabled{opacity:.55;cursor:default}
+.viral-grid .preview-card a.viral-open{color:var(--accent);font-size:11px}
+@media(max-width:720px){.viral-grid{grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}}

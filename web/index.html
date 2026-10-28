@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#f7f7f5">
   <title>拾取 · 收集和阅读</title>
-  <link rel="stylesheet" href="/style.css?v=slider-20261028-viral">
+  <link rel="stylesheet" href="/style.css?v=viral-cover-20261028">
 </head>
 <body>
   <aside class="sidebar">
@@ -128,7 +128,7 @@
       <p id="viralCounts" role="status" aria-live="polite"></p>
       <label><input id="viralShowPool" type="checkbox"> 看本批参考（含未达标与待核）</label>
       <p class="muted">严选、本档与待核均是本批参考的子集，计数不相加。缺粉或日期仅待核，不算过线。未知粉不会随拖条自动补查；更换平台或关键词后需点「重新查询」。窄屏可左右滑动表格。</p>
-      <div class="viral-table-wrap"><table class="viral-table"><thead><tr><th>选择</th><th>标题 / 作者</th><th>粉丝</th><th>互动</th><th>倍数</th><th>发布</th><th>档 / 原因</th></tr></thead><tbody id="viralRows"></tbody></table></div>
+      <div id="viralGrid" class="viral-grid" role="list"></div>
       <div class="viral-save"><label><input type="checkbox" id="viralAll"> 全选未入库</label>
         <label><input type="checkbox" id="viralTranscribe"> 入库时转写（消耗转写额度）</label>
         <button class="button primary" id="viralSave" type="button" disabled>勾选后入库</button></div>
@@ -141,7 +141,7 @@
     </section>
   </main>
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-  <script src="/viral-filter.js?v=20261028-slider"></script>
-  <script src="/app.js?v=20261028-slider"></script>
+  <script src="/viral-filter.js?v=20261028-cover"></script>
+  <script src="/app.js?v=20261028-cover"></script>
 </body>
 </html>

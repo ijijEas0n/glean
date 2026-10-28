@@ -207,6 +207,32 @@ def rows_from(payload: dict) -> list[dict]:
     raise tikhub.TikHubError("低粉爆款数据结构未识别，请核对端点与响应格式（待实测）")
 
 
+def cover_of(platform: str, obj: dict) -> str:
+    """从抖音/小红书搜索条目抠封面 URL；取不到留空，不编造。"""
+    from server.adapters.base import first_url
+    from server.adapters.douyin import _cover_url
+    from server.adapters.xiaohongshu import _image_urls, _video_cover
+
+    url = ""
+    if platform == "douyin":
+        video = obj.get("video") if isinstance(obj.get("video"), dict) else {}
+        if video:
+            url = _cover_url(video)
+    else:
+        url = _video_cover(obj) or next(iter(_image_urls(obj)), "")
+    if not url:
+        for key in ("cover", "cover_url", "thumbnail", "thumb_url", "image", "origin_cover"):
+            value = obj.get(key)
+            if isinstance(value, str) and value.startswith("http"):
+                url = value
+                break
+            if isinstance(value, dict):
+                url = first_url(value)
+                if url:
+                    break
+    return url[:2000] if url else ""
+
+
 def normalize(platform: str, obj: dict) -> dict | None:
     obj = obj.get("aweme_info") or obj.get("note_card") or obj.get("note") or obj
     if not isinstance(obj, dict):
@@ -229,6 +255,7 @@ def normalize(platform: str, obj: dict) -> dict | None:
         url += "?" + urlencode({"xsec_token": str(obj["xsec_token"]), "xsec_source": "pc_search"})
     return {"platform": platform, "id": biz, "key": f"{platform}:{biz}",
             "url": url,
+            "cover": cover_of(platform, obj),
             "title": str(pick(obj, "item_title", "title", "display_title", "desc") or "")[:500],
             "author": str(pick(author, "nickname", "nick_name", "name") or obj.get("nick_name") or ""),
             "author_id": str(pick(author, "sec_uid", "userid", "user_id", "uid", "id") or ""),

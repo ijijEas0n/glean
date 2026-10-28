@@ -79,6 +79,30 @@ class ViralTests(unittest.TestCase):
         self.assertEqual(viral.score_item({**row, 'platform': 'douyin'}, now=NOW)['interactions'], 800)
         self.assertFalse(viral.passes_threshold({**row, 'platform': 'xiaohongshu', 'collects': None}, now=NOW))
 
+
+    def test_cover_extracted_from_platform_payloads(self):
+        dy = viral.normalize('douyin', {
+            'aweme_id': '1234567890123456789', 'desc': '标题',
+            'author': {'nickname': '作者', 'sec_uid': 'sec'},
+            'statistics': {'digg_count': 10},
+            'video': {'cover': {'url_list': ['https://cdn.example/douyin-cover.jpg']}},
+            'create_time': NOW.timestamp(),
+        })
+        self.assertEqual(dy['cover'], 'https://cdn.example/douyin-cover.jpg')
+        red = viral.normalize('xiaohongshu', {
+            'note_id': X1, 'title': '笔记',
+            'user': {'nickname': '作者', 'userid': 'u1'},
+            'liked_count': 1, 'collected_count': 1, 'timestamp': NOW.timestamp(),
+            'images_list': [{'url_size_large': 'https://sns-img.xhscdn.com/cover.jpg'}],
+        })
+        self.assertEqual(red['cover'], 'https://sns-img.xhscdn.com/cover.jpg')
+        empty = viral.normalize('douyin', {
+            'aweme_id': '1234567890123456788', 'desc': '无封面',
+            'author': {'nickname': '作者'}, 'statistics': {'digg_count': 1},
+            'create_time': NOW.timestamp(),
+        })
+        self.assertEqual(empty['cover'], '')
+
     def settings(self, platforms=None, **extra):
         return viral.prepare({'platforms': platforms or list(viral.PLATFORMS), **extra})
 

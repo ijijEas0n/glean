@@ -28,12 +28,15 @@ vm.runInContext(`
 initViralControls();
 if ($('viralTierName').textContent !== '宽松') throw Error('默认档');
 viralBatch = {scanned:4, pool:[
-  {key:'a',platform:'douyin',title:'灵感',fans:1000,interactions:1500,multiplier:1.5,age_days:1,url:'https://www.douyin.com/video/1'},
+  {key:'a',platform:'douyin',title:'灵感',fans:1000,interactions:1500,multiplier:1.5,age_days:1,url:'https://www.douyin.com/video/1',cover:'https://example.com/a.jpg'},
   {key:'b',platform:'douyin',fans:null,interactions:15000,multiplier:null,age_days:1},
   {key:'c',platform:'douyin',fans:1000,interactions:15000,multiplier:15,age_days:null}
 ]};
 refilterViral();
 if (viralRows.length !== 1 || !$('viralCounts').textContent.includes('待核 2')) throw Error('宽松/待核统计');
+if (!$('viralGrid') || !$('viralGrid').children.length) throw Error('封面网格未渲染');
+const cardKids = ($('viralGrid').children || []).flatMap(c => c.children || []);
+if (!cardKids.some(ch => ch.tag === 'img' && String(ch.className || '').includes('preview-cover'))) throw Error('应显示封面图');
 viralSelected.add('a');
 $('viralTier').value = '1'; $('viralTier').events.input();
 if (viralRows.length || viralSelected.size) throw Error('严选0/隐藏选择清理');

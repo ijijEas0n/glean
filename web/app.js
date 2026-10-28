@@ -1068,19 +1068,43 @@ function refilterViral() {
   renderViral();
 }
 function renderViral() {
-  const body = $('viralRows'); body.replaceChildren();
+  const grid = $('viralGrid'); grid.replaceChildren();
   for (const row of viralRows) {
-    const tr = node('tr');
-    const choose = node('td'); const check = node('input'); check.type = 'checkbox';
-    check.setAttribute('aria-label', `选择 ${row.title || row.id}`);
-    check.checked = viralSelected.has(row.key); check.disabled = row.local || viralBusy;
-    check.addEventListener('change', () => { if (check.checked) viralSelected.add(row.key); else viralSelected.delete(row.key); renderViral(); });
-    choose.append(check); tr.append(choose);
-    const info = node('td'); const link = node('a', '', row.title || '打开作品'); link.href = row.url; link.target = '_blank'; link.rel = 'noreferrer';
-    info.append(link, node('div', 'muted', `${platformLabel(row.platform)} · ${row.author || '作者未知'}${row.local ? ' · 已入库' : ''}`)); tr.append(info);
-    tr.append(node('td', '', row.fans ?? '待核'), node('td', '', row.interactions ?? '待核'), node('td', '', row.multiplier == null ? '待核' : `${Number(row.multiplier).toFixed(2)}×`), node('td', '', row.age_days == null ? '日期待核' : `${Math.floor(row.age_days)}天前`),
-      node('td', '', row.passed ? (row.strict_pass ? '严选 · 本档' : '本档') : `${(row.fail_reasons || ['需重新查询']).join('、')}${row.fans_note ? `（${row.fans_note}）` : ''}`));
-    body.append(tr);
+    const selected = viralSelected.has(row.key);
+    const card = node('button', `preview-card${selected ? ' is-selected' : ''}${row.local || viralBusy ? ' is-disabled' : ''}`);
+    card.type = 'button'; card.setAttribute('role', 'listitem');
+    card.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    card.setAttribute('aria-label', `${selected ? '取消选择' : '选择'} ${row.title || row.id}`);
+    if (row.cover) {
+      const img = node('img', 'preview-cover'); img.loading = 'lazy'; img.alt = '';
+      img.src = coverUrl(row.cover, row.url || 'https://www.douyin.com/');
+      img.addEventListener('error', () => { img.replaceWith(node('div', 'preview-cover cover-empty')); }, { once: true });
+      card.append(img);
+    } else card.append(node('div', 'preview-cover cover-empty'));
+    const check = node('span', 'card-check', selected ? '✓' : '');
+    card.append(check);
+    if (row.local) card.append(node('span', 'saved-mark', '已入库'));
+    const body = node('div', 'viral-card-body');
+    body.append(node('div', 'viral-card-title', row.title || '（无标题）'));
+    body.append(node('div', 'viral-card-meta', `${platformLabel(row.platform)} · ${row.author || '作者未知'}`));
+    const mult = row.multiplier == null ? '倍待核' : `${Number(row.multiplier).toFixed(1)}×`;
+    const age = row.age_days == null ? '日期待核' : `${Math.floor(row.age_days)}天前`;
+    body.append(node('div', 'viral-card-stats', `粉 ${row.fans ?? '待核'} · 互动 ${row.interactions ?? '待核'} · ${mult}`));
+    const level = row.passed ? (row.strict_pass ? '严选 · 本档' : '本档') : `${(row.fail_reasons || ['未达标']).slice(0, 2).join('、')}`;
+    body.append(node('div', 'viral-card-meta', `${level} · ${age}`));
+    if (row.url) {
+      const open = node('a', 'viral-open', '打开原页'); open.href = row.url; open.target = '_blank'; open.rel = 'noreferrer';
+      open.addEventListener('click', event => event.stopPropagation());
+      body.append(open);
+    }
+    card.append(body);
+    if (!row.local && !viralBusy) {
+      card.addEventListener('click', () => {
+        if (viralSelected.has(row.key)) viralSelected.delete(row.key); else viralSelected.add(row.key);
+        renderViral();
+      });
+    }
+    grid.append(card);
   }
   const fresh = viralRows.filter(x => !x.local);
   $('viralAll').checked = fresh.length > 0 && fresh.every(x => viralSelected.has(x.key));
