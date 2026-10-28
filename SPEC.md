@@ -231,7 +231,7 @@ Base: `http://127.0.0.1:8899`
 请求共用约 4 秒超时预算，成功内存缓存 6 小时，失败缓存 60 秒；`?refresh=1` 可强制刷新。
 命中缓存保留原 `checked_at`，将 `source` 标为 `cache`。
 失败返回 `ok: false`、`latest: null`、`update_available: false` 及清晰 `error`，不影响其他服务功能。
-仅提醒，不修改文件。Agent 对用户用中文极简说明「有新版 + notes 里新增功能 + 要不要帮你更新」，不要展示 `release_url` / 发布页；等用户同意后才能按 AGENTS.md 在仓库内 `git pull` 并重启。
+仅提醒，不修改文件。Agent 对用户用中文极简说明，例如「✨ 拾取有新版本啦：`current` → `latest`，主要新增：…。要我帮你更新吗？」（带版本号与少量 emoji；无 notes 则只说有新版 + 版本号），不要展示 `release_url` / 发布页；等用户同意后才能按 AGENTS.md 在仓库内 `git pull` 并重启。
 
 ### 4.2 `POST /api/resolve`
 
