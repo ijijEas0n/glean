@@ -46,13 +46,13 @@ cd "<GLEAN_ROOT>"
 
 # 检查更新
 
-部署验收后或会话开始抓取前，可执行：
+部署验收后或会话开始抓取前，可执行（结果给自己看，不要把 JSON / 链接原样甩给用户）：
 
 ```bash
 curl -s --max-time 5 <GLEAN_HOST>/api/update
 ```
 
-- `update_available` 为 true：用中文提醒用户当前版 `current` / 最新版 `latest`，附上 `release_url`（或仓库链接）。等用户明确同意后，再按 `<GLEAN_ROOT>/AGENTS.md` 升级：在仓库内 `git pull` 后重启服务。禁止偷偷升级。
+- `update_available` 为 true：用中文极简提醒用户，例如「拾取有新版本了，主要新增：…。要我帮你更新吗？」；`notes` 有内容就精简成一两句中文功能说明，没有就说「有新版本」。可选带一句「当前 x → 最新 y」，**不要**贴 `release_url` / 发布页 / 网页链接，也不要讲一长串版本对比。等用户明确同意后，再按 `<GLEAN_ROOT>/AGENTS.md` 升级：在仓库内 `git pull` 后重启服务。禁止偷偷升级。
 - `error` 非空：一句「暂时查不到更新」带过，继续正常抓取，不当成服务故障。
 
 # 入库
