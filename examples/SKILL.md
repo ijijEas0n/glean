@@ -70,6 +70,8 @@ cd "<GLEAN_ROOT>"
 
 先 `POST <GLEAN_HOST>/api/preview`，正文 `{"url":"<主页>","options":{"limit":50}}`，拿作品清单让用户挑，再 `POST <GLEAN_HOST>/api/jobs`，带 `items` 批量抓。
 
+批量入库时不要只验主页的 `content.md`：从 `job.partial.children[]`（展开主页可看 `job.partial.children_preview[]` 或主页 `item.json` 的 `children[]`）取子条 `item_id`，逐条读 `<GLEAN_LIBRARY>/items/<item_id>/content.md`。`local: true` 只表示已入库；`has_transcript` 是提示，字幕验收仍要求非空「## 字幕原文」。子条的 `warnings` 和 `transcript.note` 写明缺 Key、引擎关闭、下载失败或没有说话等原因，照实反馈。
+
 # 多条
 
 各自提交，一次报完，给 AI 的格式：

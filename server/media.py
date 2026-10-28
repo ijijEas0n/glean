@@ -828,14 +828,13 @@ def transcribe_video(
         if on_progress:
             on_progress(label, percent, detail)
 
+    if engine == "off":
+        return {"source": "none", "text": "", "segments": [],
+                "note": "转写引擎已关闭（off），本次请求未生成文字稿"}
     if fallback_local is None:
         fallback_local = bool(load_config().get("transcribe_fallback_local", True))
     if not has_audio_stream(video):
         return {"source": "none", "text": "", "segments": [], "note": "视频没有音轨，没做转写"}
-    if engine == "off":
-        # 用户主动关的，不是降级——不给 note，否则每条都挂一句「已关闭转写」的警告，
-        # 界面上一片黄条，反而把真正的警告淹了（SPEC：warnings 只记降级路径）。
-        return {"source": "none", "text": "", "segments": [], "note": ""}
 
     report("正在提取音频", 30)
     try:

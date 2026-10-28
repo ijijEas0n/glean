@@ -296,7 +296,8 @@ def render_content_md(item: dict[str, Any]) -> str:
             lines.append(" ".join(f"#{t}" for t in tags))
             lines.append("")
 
-        segments = transcript.get("segments") or []
+        segments = [segment for segment in transcript.get("segments") or []
+                    if isinstance(segment, dict) and str(segment.get("text") or "").strip()]
         transcript_text = str(transcript.get("text") or "").strip()
         if segments:
             lines.append("## 字幕原文")

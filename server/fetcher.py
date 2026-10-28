@@ -123,6 +123,22 @@ def _clean_titles(item: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
+def _has_transcript(item: dict[str, Any]) -> bool:
+    transcript = item.get("transcript") or {}
+    return bool(str(transcript.get("text") or "").strip()) or any(
+        isinstance(segment, dict) and str(segment.get("text") or "").strip()
+        for segment in transcript.get("segments") or []
+    )
+
+
+def _child_result(child: dict[str, Any], saved: dict[str, Any]) -> list[str]:
+    """子条入库状态和字幕状态分开；把带作品 ID 的原因汇总到父任务。"""
+    child["item_id"] = saved["id"]
+    child["has_transcript"] = _has_transcript(saved)
+    child["warnings"] = list(saved.get("warnings") or [])
+    return [f"{saved['id']}：{warning}" for warning in child["warnings"]]
+
+
 def _finalize(item: dict[str, Any], ctx: FetchContext) -> dict[str, Any]:
     _split_text_and_tags(item)
     _clean_titles(item)
@@ -143,11 +159,17 @@ def _finalize(item: dict[str, Any], ctx: FetchContext) -> dict[str, Any]:
     if not item.get("transcript"):
         item["transcript"] = {"source": "none", "text": "", "segments": []}
     transcript = item["transcript"]
-    有文字 = bool(str(transcript.get("text") or "").strip()) or any(
-        str(segment.get("text") or "").strip()
-        for segment in transcript.get("segments") or []
-        if isinstance(segment, dict)
-    )
+    有文字 = _has_transcript(item)
+    # 适配器可能返回空稿但忘了 warn；在所有落盘路径统一兜底。
+    if item.get("kind") == "video" and ctx.want_transcribe and not 有文字:
+        note = str(transcript.get("note") or "").strip()
+        if not note:
+            note = ("转写引擎已关闭（off），本次请求未生成文字稿"
+                    if ctx.options.get("transcribe_engine") == "off"
+                    else "已请求转写，但未生成文字稿（转写未返回有效文字）")
+        transcript["note"] = note
+        ctx.warn(note)
+        item["warnings"] = list(ctx.warnings)
     if ctx.options.get("keep_video", True) is False and 有文字:
         for media in item.get("media") or []:
             if not isinstance(media, dict) or media.get("role") != "video":
@@ -355,8 +377,8 @@ def run_batch(
                 child_row["cover"],
             ) or child_row["cover"]
             child_row["local"] = True
-            child_row["batch_state"] = "done"
-            child_row["warnings"] = child_item.get("warnings") or []
+            child_row["batch_state"] = "partial" if child_item.get("warnings") else "done"
+            batch_item["warnings"].extend(_child_result(child_row, child_item))
             done_ids.append(saved_id)
             待补播放.append((saved_id, str(child_resolved.ids.get("aweme_id") or "")))
         except Exception as exc:  # noqa: BLE001 - 单条失败不拖垮整批
@@ -387,10 +409,13 @@ def run_batch(
     if progress:
         progress("正在写入本地库", 96, f"成功 {len(done_ids)} 条，失败 {failed} 条")
 
+    if failed:
+        batch_item["warnings"].append(f"{failed} 条作品抓取失败（其余已入库）")
+    publish_batch()
     return {
         "item_id": profile_id or "",
         "item": batch_item,
-        "warnings": ([f"{failed} 条作品抓取失败（其余已入库）"] if failed else []),
+        "warnings": batch_item["warnings"],
         "children_ok": len(done_ids),
         "children_failed": failed,
     }
@@ -446,18 +471,19 @@ def run_fetch(
                     saved = fetch_one_child(child, child_options, None, index=index, total=total)
                     if saved:
                         child["local"] = True
+                        item["warnings"].extend(_child_result(child, saved))
                         children_ok += 1
                     else:
                         children_failed += 1
                 item["children"] = children
 
+        if children_failed:
+            item["warnings"].append(f"{children_failed} 条作品内容未能抓取（其余已入库）")
+        ctx.publish()
         if progress:
             progress("正在写入本地库", 95)
         item_id = store.save_item(item)
         store.rebuild_index()
-
-    if children_failed:
-        ctx.warn(f"{children_failed} 条作品内容未能抓取（其余已入库）")
 
     return {
         "item_id": item_id,

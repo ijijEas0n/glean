@@ -409,7 +409,7 @@ def fetch_note(resolved: Resolved, ctx: FetchContext) -> dict[str, Any]:
             ctx.publish()  # 字幕是 report 之后才填的，手动推一次让前端立刻能看到
     elif has_video:
         item["transcript"] = {"source": "none", "text": "", "segments": [],
-                              "note": "视频未下载到本地，跳过转写"}
+                              "note": "已关闭转写" if not ctx.want_transcribe else "视频未下载到本地，跳过转写"}
 
     if not image_urls and not video_candidates:
         ctx.warn("这条笔记既没有图片也没有视频（可能是纯文字帖）")
