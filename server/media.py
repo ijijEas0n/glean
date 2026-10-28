@@ -263,6 +263,9 @@ def save_remote_media(
         try:
             download_url(url, tmp_path, referer=referer)
         except Exception as exc:  # noqa: BLE001 - 单张图失败不该拖垮整条
+            if on_warn:
+                label = "图片" if media_type == "image" else "视频"
+                on_warn(f"{label}未下载：{type(exc).__name__}: {exc}"[:200])
             return {
                 "role": role, "type": media_type, "path": "",
                 "url": url if keep_remote else "", "width": 0, "height": 0, "bytes": 0,

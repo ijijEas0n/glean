@@ -193,13 +193,18 @@ def fetch_post(resolved: Resolved, ctx: FetchContext) -> dict[str, Any]:
     payload = get(DETAIL_PATH, {"tweet_id": tweet_id})
     ctx.note_api(DETAIL_PATH)
     data = data_of(payload) or {}
-    if not isinstance(data, dict) or not (data.get("text") or data.get("display_text")):
+    if not isinstance(data, dict):
         raise TikHubError("X 没有返回帖子内容（帖子可能已删除、受保护或需要登录）")
 
     author = data.get("author") or {}
     media = data.get("media") or {}
     article = data.get("article") if isinstance(data.get("article"), dict) else None
-    kind = "article" if article else ("images" if _photos(media) else ("video" if _videos(media) else "text"))
+    photos = _photos(media)
+    videos = _videos(media)
+    text_value = article.get("full_text") if article else (data.get("text") or data.get("display_text"))
+    if not (text_value or photos or videos or article is not None):
+        raise TikHubError("X 没有返回帖子内容（帖子可能已删除、受保护或需要登录）")
+    kind = "article" if article is not None else ("video" if videos else ("images" if photos else "text"))
 
     item_id = ctx.begin(make_item_id("twitter", kind, tweet_id))
     item = empty_item("twitter", kind, resolved)
@@ -240,7 +245,6 @@ def fetch_post(resolved: Resolved, ctx: FetchContext) -> dict[str, Any]:
 
     ctx.report("正在下载媒体", 40)
     media_entries: list[dict[str, Any]] = []
-    photos = _photos(media)
     for index, url in enumerate(photos, start=1):
         if ctx.want_media:
             media_entries.append(ctx.save_media(url, f"{index:03d}",
@@ -250,7 +254,6 @@ def fetch_post(resolved: Resolved, ctx: FetchContext) -> dict[str, Any]:
             media_entries.append({"role": "cover" if index == 1 else "content", "type": "image",
                                   "path": "", "url": url, "width": 0, "height": 0, "bytes": 0})
 
-    videos = _videos(media)
     if videos and not photos:
         # 纯视频推文：用视频缩略图当封面。不取的话库里这条就是没封面的空白格子
         # （索引的 cover 字段只认 role="cover" 的媒体项）。
