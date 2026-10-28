@@ -157,6 +157,7 @@ library/
 
 | 接口 | 作用 |
 |---|---|
+| `GET /api/update` | 只读检查公开仓新版，提醒用户，不自动升级 |
 | `GET /api/status` | 健康检查。`ok: true` 只表示服务已启动 |
 | `POST /api/resolve` `{"url": ...}` | 识别链接 + 查重（返回 `already_in_library`） |
 | `POST /api/jobs` `{"url": ..., "options": {"download_media": true, "transcribe": true}}` | 提交抓取，返回 `job_id` |
@@ -175,6 +176,13 @@ python3 tools/render_skill.py \
 Agent 和 glean 不在同一台机器时加上 `--machine-label <机器名>`。库目录不是 `<仓库>/library` 时加上 `--library-dir`。已有输出默认不覆盖，确认要替换再加 `--force`。生成结果里不应再出现这些占位符。放到哪个 Skill 目录见 [`AGENTS.md`](AGENTS.md) 第 9 步。
 
 抓下来后，让 Agent 读 `library/items/<id>/content.md` 做分析；需要回填到飞书等文档时，用对应平台的 CLI / Skill 单独完成（本项目不包含）。
+
+## 检查更新与升级
+
+`curl -s --max-time 5 http://127.0.0.1:8899/api/update` 返回当前版、最新版、`notes` 等（程序自用；`release_url` 不必展示给用户）。查不到更新不影响抓取。
+版本号以根目录 `VERSION` 为准；修改后重启服务生效。
+
+有新版时，Agent 用中文极简提醒，例如「✨ 拾取有新版本啦：`1.0.0` → `1.1.0`，主要新增：…。要我帮你更新吗？」（带版本号与少量 emoji；无 notes 则只说有新版 + 版本号），不要贴发布页链接。必须先征得用户同意，才可在 `<GLEAN_ROOT>` 执行 `git pull`，再按 [AGENTS.md](AGENTS.md) 重启服务（手动启动使用 `./停止.sh`、`./启动.sh`；已安装 launchd 自启的按其说明操作）。不会自动升级。
 
 ## 已移除
 

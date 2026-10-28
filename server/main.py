@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 if __package__ in (None, ""):  # 允许 `python3 server/main.py` 直接启动
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from server import media, store  # type: ignore
+    from server import media, store, update_check  # type: ignore
     from server.accounts import (add_account, cached_works, get_account,
                                  remove_account, summarize_all, update_account)
     from server.config import (BROWSER_UA, LIBRARY_ROOT, WEB_ROOT, aliyun_api_key,
@@ -37,7 +37,7 @@ if __package__ in (None, ""):  # 允许 `python3 server/main.py` 直接启动
     from server.tikhub import (TikHubError, account_state, detect_proxy, proxy_state)
     from server.tikhub import _build_opener as tikhub_opener
 else:
-    from . import media, store
+    from . import media, store, update_check
     from .accounts import (add_account, cached_works, get_account,
                            remove_account, summarize_all, update_account)
     from .config import (BROWSER_UA, LIBRARY_ROOT, WEB_ROOT, aliyun_api_key,
@@ -53,7 +53,7 @@ else:
 BIND_HOST = "127.0.0.1"
 BIND_PORT = 8899
 MAX_BODY = 2 * 1024 * 1024
-VERSION = "1.0"
+VERSION = update_check.VERSION
 
 JOBS = JobManager(max_workers=2)
 _AVATAR_CACHE: dict[str, tuple[bytes, str]] = {}
@@ -162,7 +162,7 @@ def _同步在跑(progress: dict[str, Any]) -> bool:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "Glean/1.0"
+    server_version = f"Glean/{VERSION}"
     protocol_version = "HTTP/1.1"
     # ---- 基础工具 ----
 
@@ -278,6 +278,9 @@ class Handler(BaseHTTPRequestHandler):
     # ---- API ----
 
     def _route_api_get(self, path: str, query: dict[str, list[str]]) -> None:
+        if path == "/api/update":
+            self._json(update_check.check_update(VERSION, refresh=query.get("refresh") == ["1"]))
+            return
         if path == "/api/status":
             self._api_status()
             return

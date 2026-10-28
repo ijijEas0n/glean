@@ -177,6 +177,7 @@ Base: `http://127.0.0.1:8899`
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
+| GET  | `/api/update` | 只读检查公开仓新版，支持 `?refresh=1` |
 | GET  | `/api/status` | 健康 + 凭证 + 网络状态 |
 | GET  | `/api/accounts` | 我的账号看板（含每个号的作品数/已拿数） |
 | GET  | `/api/accounts/<id>/works` | 只读返回本地主页清单与本地作者作品合并结果，不访问平台 |
@@ -208,7 +209,7 @@ Base: `http://127.0.0.1:8899`
 ```json
 {
   "ok": true,
-  "version": "1.0",
+  "version": "1.0.0",
   "library_root": "<GLEAN_ROOT>/library",
   "key_present": true,
   "key_source": "env",
@@ -218,6 +219,19 @@ Base: `http://127.0.0.1:8899`
   "ffmpeg": true, "ytdlp": true, "volcengine_key": true
 }
 ```
+
+### 4.1a `GET /api/update`
+
+返回 HTTP 200 JSON：`{ok, current, latest, update_available, release_url, html_url, notes, checked_at, source, error}`。
+`current` 与 `/api/status.version` 均来自启动时读取的根目录 `VERSION`，文件不可读或无效时兜底 `0.0.0`。
+依次查询 GitHub latest release、最新 tag、main 分支 VERSION；无 release、无效响应或请求失败均可回退。
+版本忽略 `v` / `V` 前缀，按数字段比较，缺段视为 0；仅接受数字段格式。
+`latest` 保留上游版本写法，`notes` 最多 2000 字符，`checked_at` 为带时区 ISO8601。
+`source` 为 `release` / `tag` / `raw_version` / `cache`，全部失败时为 null；raw 回退链接指向仓库。
+请求共用约 4 秒超时预算，成功内存缓存 6 小时，失败缓存 60 秒；`?refresh=1` 可强制刷新。
+命中缓存保留原 `checked_at`，将 `source` 标为 `cache`。
+失败返回 `ok: false`、`latest: null`、`update_available: false` 及清晰 `error`，不影响其他服务功能。
+仅提醒，不修改文件。Agent 对用户用中文极简说明，例如「✨ 拾取有新版本啦：`current` → `latest`，主要新增：…。要我帮你更新吗？」（带版本号与少量 emoji；无 notes 则只说有新版 + 版本号），不要展示 `release_url` / 发布页；等用户同意后才能按 AGENTS.md 在仓库内 `git pull` 并重启。
 
 ### 4.2 `POST /api/resolve`
 
