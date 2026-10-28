@@ -44,6 +44,17 @@ cd "<GLEAN_ROOT>"
 - 已经装过 macOS launchd 自启（标识 `com.example.glean`）时，才用 `launchctl kickstart -k gui/$(id -u)/com.example.glean`。仓库里的自启模板是 launchd，不能拿来在 Linux 上开机自启。
 - Windows 不用 WSL 时没有 `./启动.sh`。在仓库目录用 PowerShell 运行 `python server\main.py --host 127.0.0.1 --port 8899`。Key 由用户自己放进环境变量，不要贴进聊天。
 
+# 检查更新
+
+部署验收后或会话开始抓取前，可执行：
+
+```bash
+curl -s --max-time 5 <GLEAN_HOST>/api/update
+```
+
+- `update_available` 为 true：用中文提醒用户当前版 `current` / 最新版 `latest`，附上 `release_url`（或仓库链接）。等用户明确同意后，再按 `<GLEAN_ROOT>/AGENTS.md` 升级：在仓库内 `git pull` 后重启服务。禁止偷偷升级。
+- `error` 非空：一句「暂时查不到更新」带过，继续正常抓取，不当成服务故障。
+
 # 入库
 
 1. 查重：`curl -s -X POST <GLEAN_HOST>/api/resolve -H 'Content-Type: application/json' -d '{"url":"<链接或整段分享文案>"}'`。`already_in_library` 有 id 就直接用那条。
