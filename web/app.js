@@ -910,6 +910,21 @@ async function loadCollectDefaults() {
     if (!state.onceOptionsDirty) { $('onceTranscribe').checked = state.config.transcribe_engine !== 'off'; $('onceKeep').checked = state.config.keep_video !== false; }
     syncTranscribeControl();
     state.configLoaded = true;
+    if (!viralDirty) {
+      const t = state.config.viral?.tier;
+      if (Number.isInteger(t) && t >= 0 && t <= 4) $('viralTier').value = t;
+      applyViralTier();
+      for (const p of ['douyin', 'xiaohongshu']) {
+        for (const k of ViralFilter.keys) {
+          const v = state.config.viral?.[p]?.[k];
+          if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+            $(viralInputId(p, k)).value = v;
+            if (v !== ViralFilter.preset(p, Number($('viralTier').value))[k]) viralCustom = true;
+          }
+        }
+      }
+      updateViralLabel();
+    }
   } catch (err) { toast(`设置没读出来：${err.message}`, true); }
   syncCount();
 }
@@ -938,6 +953,7 @@ function setRoute() {
 function updateLibraryTabs() { document.querySelectorAll('#libraryTabs button').forEach(b => b.classList.toggle('is-active', b.dataset.tab === state.tab)); }
 
 function bind() {
+  initViralControls();
   $('viralForm').addEventListener('submit', searchViral);
   $('viralSave').addEventListener('click', saveViral);
   $('viralAll').addEventListener('change', () => { viralRows.filter(x => !x.local).forEach(x => { if ($('viralAll').checked) viralSelected.add(x.key); else viralSelected.delete(x.key); }); renderViral(); });
@@ -990,6 +1006,67 @@ function bind() {
 
 // 低粉候选保留在当前页面内存；预览不会写成虚拟库条目。
 let viralRows = [], viralSelected = new Set(), viralBusy = false;
+let viralBatch = null, viralCustom = false, viralDirty = false;
+const viralInputId = (p, k) => `viral-${p}-${k}`;
+function viralRules() {
+  return Object.fromEntries(['douyin', 'xiaohongshu'].map(p => [p,
+    Object.fromEntries(ViralFilter.keys.map(k => [k, Number($(viralInputId(p, k)).value)]))]));
+}
+function updateViralLabel() {
+  const name = viralCustom ? '自定义' : ViralFilter.names[Number($('viralTier').value)];
+  $('viralTierName').textContent = name;
+  $('viralTier').setAttribute('aria-valuetext', name);
+}
+function applyViralTier() {
+  const tier = Number($('viralTier').value);
+  for (const p of ['douyin', 'xiaohongshu']) for (const k of ViralFilter.keys)
+    $(viralInputId(p, k)).value = ViralFilter.preset(p, tier)[k];
+  viralCustom = false; updateViralLabel(); refilterViral();
+}
+function initViralControls() {
+  const labels = ['粉丝上限', '最低互动', '最低倍数', '本地天数'];
+  for (const p of ['douyin', 'xiaohongshu']) {
+    const group = node('fieldset'); group.append(node('legend', '', platformLabel(p)));
+    ViralFilter.keys.forEach((k, i) => {
+      const label = node('label', '', labels[i]); const input = node('input');
+      input.id = viralInputId(p, k); input.type = 'number'; input.min = '0';
+      input.step = k === 'min_multiplier' ? 'any' : '1';
+      input.required = true; label.append(input); group.append(label);
+      input.addEventListener('input', () => { viralDirty = true; viralCustom = true; updateViralLabel(); refilterViral(); });
+    });
+    $('viralThresholds').append(group);
+  }
+  $('viralTier').addEventListener('input', () => { viralDirty = true; applyViralTier(); });
+  $('viralShowPool').addEventListener('change', refilterViral);
+  applyViralTier();
+}
+function refilterViral() {
+  if (!viralBatch) return;
+  if (!Array.isArray(viralBatch.pool)) {
+    $('viralCounts').textContent = '本批缺少参考数据，请重新查询后再调松紧。'; return;
+  }
+  if (!$('viralForm').checkValidity()) {
+    $('viralCounts').textContent = '请填写有效的非负门槛数字。';
+    viralRows = []; viralSelected.clear(); renderViral(); return;
+  }
+  const rules = viralRules();
+  const pool = viralBatch.pool.map(row => {
+    const scored = ViralFilter.score(row, rules[row.platform]);
+    scored.strict_pass = ViralFilter.score(row, ViralFilter.preset(row.platform, 1)).passed;
+    return scored;
+  });
+  const count = pool.filter(x => x.passed).length;
+  const pending = pool.filter(x => x.pending).length;
+  $('viralCounts').textContent = `严选 ${pool.filter(x => x.strict_pass).length} · 本档 ${count} · 本批参考 ${pool.length} · 待核 ${pending}`;
+  const base = `扫描 ${viralBatch.scanned || 0} 条，可识别去重 ${pool.length} 条。同批重筛不消耗查询额度。`;
+  $('viralStatus').textContent = base + (count ? '' : ' 当前档没有候选，可往宽松拖或看本批参考；不能据此判断关键词没有好内容。')
+    + (viralBatch.coverage?.incomplete ? ' 覆盖不全，结果未完整核对。' : '') + (viralBatch.warnings || []).join('；');
+  viralRows = pool.filter(x => $('viralShowPool').checked || x.passed)
+    .sort((a, b) => $('viralShowPool').checked ? (b.interactions ?? -1) - (a.interactions ?? -1) : b.multiplier - a.multiplier);
+  const visible = new Set(viralRows.map(x => x.key));
+  viralSelected = new Set([...viralSelected].filter(k => visible.has(k)));
+  renderViral();
+}
 function renderViral() {
   const body = $('viralRows'); body.replaceChildren();
   for (const row of viralRows) {
@@ -1001,46 +1078,56 @@ function renderViral() {
     choose.append(check); tr.append(choose);
     const info = node('td'); const link = node('a', '', row.title || '打开作品'); link.href = row.url; link.target = '_blank'; link.rel = 'noreferrer';
     info.append(link, node('div', 'muted', `${platformLabel(row.platform)} · ${row.author || '作者未知'}${row.local ? ' · 已入库' : ''}`)); tr.append(info);
-    tr.append(node('td', '', row.fans), node('td', '', row.interactions), node('td', '', `${Number(row.multiplier).toFixed(2)}×`), node('td', '', row.age_days == null ? '日期未知' : `${Math.floor(row.age_days)}天前`));
+    tr.append(node('td', '', row.fans ?? '待核'), node('td', '', row.interactions ?? '待核'), node('td', '', row.multiplier == null ? '待核' : `${Number(row.multiplier).toFixed(2)}×`), node('td', '', row.age_days == null ? '日期待核' : `${Math.floor(row.age_days)}天前`),
+      node('td', '', row.passed ? (row.strict_pass ? '严选 · 本档' : '本档') : `${(row.fail_reasons || ['需重新查询']).join('、')}${row.fans_note ? `（${row.fans_note}）` : ''}`));
     body.append(tr);
   }
   const fresh = viralRows.filter(x => !x.local);
   $('viralAll').checked = fresh.length > 0 && fresh.every(x => viralSelected.has(x.key));
   $('viralAll').disabled = viralBusy || !fresh.length;
-  $('viralSave').disabled = viralBusy || !viralSelected.size;
+  $('viralSave').disabled = viralBusy || !viralSelected.size || viralSelected.size > 100;
   $('viralSearch').disabled = viralBusy;
-  $('viralSave').textContent = viralSelected.size ? `入库 ${viralSelected.size} 条` : '勾选后入库';
+  $('viralSearch').textContent = viralBatch ? '重新查询（消耗额度）' : '查询（消耗额度）';
+  $('viralTier').disabled = viralBusy;
+  $('viralThresholds').querySelectorAll('input').forEach(input => { input.disabled = viralBusy; });
+  $('viralSave').textContent = viralSelected.size > 100 ? '每次最多入库100条，请减少勾选' : viralSelected.size ? `入库 ${viralSelected.size} 条` : '勾选后入库';
 }
 async function searchViral(event) {
   event.preventDefault(); if (viralBusy) return;
   const platforms = []; if ($('viralDouyin').checked) platforms.push('douyin'); if ($('viralXhs').checked) platforms.push('xiaohongshu');
   if (!platforms.length) { $('viralStatus').textContent = '请至少选择一个平台'; return; }
+  viralDirty = true;
   const keywords = $('viralKeywords').value.split(/[,，\n]/).map(x => x.trim()).filter(Boolean);
-  viralBusy = true; viralRows = []; viralSelected.clear(); renderViral();
+  viralBusy = true; viralBatch = null; $('viralCounts').textContent = ''; viralRows = []; viralSelected.clear(); renderViral();
   $('viralStatus').textContent = '正在查询候选，可能需要几分钟…';
   try {
-    const r = await api('/api/viral/preview', { method: 'POST', body: { platforms, ...(keywords.length ? { keywords } : {}), limit: 50 } });
+    const r = await api('/api/viral/preview', { method: 'POST', body: { platforms, ...(keywords.length ? { keywords } : {}), tier: Number($('viralTier').value), thresholds: viralRules(), limit: 100 } });
     watchJob(r.job_id, job => {
       if (!['done', 'partial', 'failed'].includes(job.state)) return;
       viralBusy = false;
       if (job.state === 'failed') $('viralStatus').textContent = job.error || '查询失败';
       else {
-        viralRows = job.viral?.candidates || [];
-        const rules = Object.entries(job.viral?.thresholds || {}).map(([p, t]) => `${platformLabel(p)} ≤${t.max_fans}粉 / ≥${t.min_interactions}互动 / ≥${t.min_multiplier}倍 / ${t.max_age_days}天（缺日期${t.allow_missing_date ? '放行' : '跳过'}）`).join('；');
-        $('viralStatus').textContent = `找到 ${viralRows.length} 条候选，扫描 ${job.viral?.scanned || 0} 条。${rules}。${(job.warnings || []).join('；')}`;
+        viralBatch = job.viral || {};
+        viralRows = viralBatch.candidates || [];
+        refilterViral();
       }
       renderViral();
     });
   } catch (err) { viralBusy = false; renderViral(); $('viralStatus').textContent = err.message; }
 }
+function markViralLocal(row) {
+  row.local = true; viralSelected.delete(row.key);
+  const original = viralBatch?.pool?.find(x => x.key === row.key);
+  if (original) original.local = true;
+}
 async function saveViral() {
   if (viralBusy) return;
   const selected = viralRows.filter(x => viralSelected.has(x.key) && !x.local);
-  if (!selected.length) return;
+  if (!selected.length || selected.length > 100) return;
   viralBusy = true; renderViral();
   try {
     const r = await api('/api/viral/save', { method: 'POST', body: { items: selected.map(x => ({ platform: x.platform, id: x.id, url: x.url })), options: { transcribe: $('viralTranscribe').checked } } });
-    for (const existing of r.existing || []) { const row = viralRows.find(x => x.key === existing.id); if (row) { row.local = true; viralSelected.delete(row.key); } }
+    for (const existing of r.existing || []) { const row = viralRows.find(x => x.key === existing.id); if (row) { markViralLocal(row); } }
     if (!r.job_id) { viralBusy = false; renderViral(); $('viralStatus').textContent = '所选作品已在本地，已跳过下载'; return; }
     $('viralStatus').textContent = '正在保存所选作品…'; refreshJobs();
     watchJob(r.job_id, job => {
@@ -1050,7 +1137,7 @@ async function saveViral() {
       for (const child of job.partial?.children || []) {
         if (!child.local) continue;
         const row = viralRows.find(x => x.url === child.url);
-        if (row) { row.local = true; viralSelected.delete(row.key); }
+        if (row) { markViralLocal(row); }
       }
       renderViral();
       $('viralStatus').textContent = job.state === 'failed' ? job.error : `完成：${job.children_ok || 0} 条成功，${job.children_failed || 0} 条失败。${(job.warnings || []).join('；')}`;

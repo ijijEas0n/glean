@@ -2,6 +2,9 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
+import json
+import subprocess
+import shutil
 import unittest
 from unittest.mock import Mock, patch
 
@@ -35,7 +38,7 @@ class ViralTests(unittest.TestCase):
     def score(self, **patches):
         item = {'platform': 'douyin', 'fans': 1000, 'likes': 10000,
                 'published_at': NOW.isoformat(), **patches}
-        return viral.score_item(item, now=NOW)
+        return viral.score_item(item, viral.preset("douyin", 1), now=NOW)
 
     def test_multiplier_and_zero_fans_do_not_mutate(self):
         item = {'platform': 'douyin', 'fans': 0, 'likes': 10000, 'published_at': NOW.isoformat()}
@@ -48,11 +51,11 @@ class ViralTests(unittest.TestCase):
     def test_all_thresholds_inclusive_and_unrounded(self):
         item = {'platform': 'douyin', 'fans': 50000, 'likes': 150000,
                 'published_at': (NOW-timedelta(days=14)).isoformat()}
-        self.assertTrue(viral.passes_threshold(item, now=NOW))
+        self.assertTrue(viral.passes_threshold(item, viral.preset("douyin", 1), now=NOW))
         for field, value in [('fans', 50001), ('likes', 149999),
                              ('published_at', (NOW-timedelta(days=14, seconds=1)).isoformat())]:
             with self.subTest(field=field):
-                self.assertFalse(viral.passes_threshold({**item, field: value}, now=NOW))
+                self.assertFalse(viral.passes_threshold({**item, field: value}, viral.preset("douyin", 1), now=NOW))
         self.assertFalse(self.score(likes=9999)['passed'])
         self.assertFalse(self.score(published_at=(NOW+timedelta(seconds=1)).isoformat())['passed'])
 
@@ -63,7 +66,7 @@ class ViralTests(unittest.TestCase):
         self.assertFalse(self.score(fans=-1)['passed'])
         self.assertIsNone(self.score(fans=None)['multiplier'])
         item = {'platform': 'douyin', 'fans': 1, 'likes': 10000}
-        self.assertTrue(viral.passes_threshold(item, {'allow_missing_date': True}, now=NOW))
+        self.assertFalse(viral.passes_threshold(item, {'allow_missing_date': True}, now=NOW))
         self.assertIsNone(viral.count('nan'))
         self.assertEqual(viral.count('1.2万+'), 12000)
 
@@ -239,3 +242,129 @@ class ViralTests(unittest.TestCase):
             handler = self.route('/api/viral/save', {'items': [{'platform': 'douyin', 'id': '123'}]})
             self.assertIn('未配置', handler._error.call_args.args[0])
             create.assert_not_called()
+
+    def test_presets_default_and_config_tier(self):
+        expected = {
+            'douyin': [(30000,20000,5,7),(50000,10000,3,14),(50000,3000,1,14),(50000,1000,.3,14),(100000,300,.1,30)],
+            'xiaohongshu': [(5000,2000,2,7),(10000,1000,1,14),(10000,500,.5,14),(10000,300,.1,14),(30000,100,.05,30)]}
+        self.assertEqual(self.settings()['tier'], 3)
+        from server.config import DEFAULT_CONFIG
+        self.assertEqual(DEFAULT_CONFIG['viral']['tier'], 3)
+        for p, rows in expected.items():
+            for tier, values in enumerate(rows):
+                settings = self.settings(tier=tier)
+                self.assertEqual(tuple(settings[p][k] for k in viral.THRESHOLDS), values)
+        for tier in (-1, 5, True, '3', 1.5):
+            with self.assertRaises(ValueError):
+                self.settings(tier=tier)
+        with patch.object(viral, 'load_config', return_value={'viral': {'tier': 2}}):
+            self.assertEqual(self.settings()['douyin']['min_interactions'], 3000)
+        with patch.object(viral, 'load_config', return_value={'viral': {'douyin': {'min_interactions': 99}}}):
+            self.assertEqual(self.settings(tier=1)['douyin']['min_interactions'], 10000)
+
+    def test_same_batch_strict_zero_loose_has_candidates(self):
+        self.post.side_effect = None
+        self.post.return_value = {'data': {'objs': [dy(like_cnt=1500), dy('124', like_cnt=10)]}}
+        loose = viral.preview(self.settings(['douyin']))
+        strict = viral.preview(self.settings(['douyin'], tier=1))
+        self.assertEqual(len(loose['candidates']), 1)
+        self.assertEqual(strict['candidates'], [])
+        self.assertEqual(len(strict['pool']), 2)
+        self.assertEqual(loose['stats']['strict_pass'], 0)
+        self.assertEqual(loose['stats']['tier_pass'], 1)
+        calls = self.post.call_count
+        rerun = [viral.score_item(x, viral.preset('douyin', 3)) for x in strict['pool']]
+        self.assertEqual(sum(x['passed'] for x in rerun), 1)
+        self.assertEqual(self.post.call_count, calls)
+        self.get.assert_not_called()
+        self.assertNotIn('statistics', strict['pool'][0]['raw'])
+
+    def test_missing_fans_and_date_stay_pending_in_pool(self):
+        self.post.side_effect = None
+        self.post.return_value = {'data': {'objs': [dy(fans_cnt=None), dy('124', publish_time=None)]}}
+        result = viral.preview(self.settings(['douyin'], thresholds={'douyin': {'allow_missing_date': True}}))
+        self.assertEqual(result['candidates'], [])
+        self.assertEqual(result['stats']['pending'], 2)
+        self.assertEqual(result['stats']['pending_fans'], 1)
+        self.assertEqual(result['stats']['pending_date'], 1)
+        self.assertTrue(all(x['pass_level'] == 'pending' for x in result['pool']))
+        self.assertIsNone(result['pool'][0]['multiplier'])
+        self.get.assert_not_called()
+
+    def test_sources_reserved_before_author_budget(self):
+        order = []
+        def get(path, params):
+            order.append(path)
+            if path.endswith('search_notes'):
+                return {'data': {'items': [xhs(params['keyword'].replace('A', X1).replace('B', X2))]}}
+            return {'data': {'fans': 1000}}
+        self.get.side_effect = get
+        settings = self.settings(['xiaohongshu'], keywords=['A', 'B'])
+        settings['max_calls'] = 2
+        result = viral.preview(settings)
+        self.assertEqual(result['calls'], 2)
+        self.assertTrue(all(path.endswith('search_notes') for path in order))
+        self.assertTrue(result['coverage']['incomplete'])
+        self.assertEqual(result['coverage']['authors_checked'], 0)
+        self.assertEqual(result['stats']['pending_fans'], 2)
+        self.assertEqual(result['stats']['recognized'], 2)
+
+    def test_scan_cap_and_limit_do_not_truncate_pool(self):
+        self.post.side_effect = None
+        self.post.return_value = {'data': {'objs': [dy(str(i)) for i in range(210)]}}
+        result = viral.preview(self.settings(['douyin'], limit=1))
+        self.assertEqual(len(result['pool']), 200)
+        self.assertEqual(len(result['candidates']), 1)
+        self.assertEqual(result['stats']['tier_pass'], 200)
+        self.assertTrue(result['coverage']['incomplete'])
+
+    @unittest.skipUnless(shutil.which('node'), '需要 node 验证前端纯函数')
+    def test_frontend_presets_and_local_filter_match_backend(self):
+        rows = []
+        for p in viral.PLATFORMS:
+            for fans, likes, collects, age in [(1000,1500,300,1),(None,20000,1,1),
+                    (1000,20000,100,None),(100000,100000,100,29),(0,300,100,3),
+                    (1000,None,100,2),(50000,15000,0,14),(1,100000,1,-1)]:
+                item = {'platform': p, 'fans': fans, 'likes': likes, 'collects': collects,
+                        'published_at': (NOW-timedelta(days=age)).isoformat() if age is not None else None}
+                rows.append(viral.score_item(item, now=NOW))
+        root = Path(__file__).resolve().parents[1]
+        code = """const f=require('./web/viral-filter.js');
+const fs=require('fs'); const rows=JSON.parse(fs.readFileSync(0,'utf8'));
+console.log(JSON.stringify({presets:Object.fromEntries(['douyin','xiaohongshu'].map(p=>[p,Array.from({length:5},(_,i)=>f.preset(p,i))])),
+scores:rows.map(r=>Array.from({length:5},(_,i)=>f.score(r,f.preset(r.platform,i))))}));"""
+        result = subprocess.run(['node', '-e', code], cwd=root, input=json.dumps(rows), text=True, capture_output=True, check=True)
+        front = json.loads(result.stdout)
+        self.assertEqual(front['presets'], {p: [viral.preset(p,t) for t in range(5)] for p in viral.PLATFORMS})
+        for row, scores in zip(rows, front['scores']):
+            for tier, score in enumerate(scores):
+                backend = viral.score_item(row, viral.preset(row['platform'], tier), now=NOW)
+                self.assertEqual(score['passed'], backend['passed'])
+                self.assertEqual(score['fail_reasons'], backend['fail_reasons'])
+                self.assertEqual(score['pending'], backend['pending'])
+
+    @unittest.skipUnless(shutil.which('node'), '需要 node 验证页面交互')
+    def test_slider_interactions_without_network(self):
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(['node', 'tests/viral_ui.cjs'], cwd=root, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_current_tier_plans_enrichment_without_spending_on_low_rows(self):
+        def get(path, params):
+            if path.endswith('search_notes'):
+                return {'data': {'items': [xhs(liked_count=300, collected_count=100),
+                    xhs(X2, liked_count=10, collected_count=1, user={'userid': 'low'}),
+                    xhs(X3, timestamp=None, user={'userid': 'no-date'})]}}
+            return {'data': {'fans': 1000}}
+        self.get.side_effect = get
+        loose = viral.preview(self.settings(['xiaohongshu'], tier=3))
+        self.assertEqual(loose['calls'], 2)
+        self.assertEqual(loose['stats']['tier_pass'], 1)
+        self.assertEqual(loose['stats']['pending_fans'], 2)
+        self.assertEqual(loose['preset'], {'id': 3, 'name': '宽松'})
+        self.get.reset_mock()
+        strict = viral.preview(self.settings(['xiaohongshu'], tier=1))
+        self.assertEqual(strict['calls'], 1)
+        self.assertEqual(strict['stats']['pending_fans'], 3)
+        self.assertEqual(len(strict['pool']), 3)
+        self.assertEqual(self.get.call_count, 1)

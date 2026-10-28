@@ -47,7 +47,7 @@ PROXY_CANDIDATES = (
 )
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "viral": {},             # 低粉爆款：深合并 server.viral.DEFAULTS，支持分平台配置
+    "viral": {"tier": 3},             # 低粉爆款：深合并 server.viral.DEFAULTS，支持分平台配置
     "proxy": "",              # 空 = 自动探测；填 "direct" 强制直连
     "transcribe_engine": "volcengine",   # volcengine | aliyun | local | off
     # 阿里云用的模型。**必须是异步 filetrans 那类**——同步模型（qwen-audio-3.1-asr-flash）

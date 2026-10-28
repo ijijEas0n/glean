@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#f7f7f5">
   <title>拾取 · 收集和阅读</title>
-  <link rel="stylesheet" href="/style.css?v=20261028-viral">
+  <link rel="stylesheet" href="/style.css?v=slider-20261028-viral">
 </head>
 <body>
   <aside class="sidebar">
@@ -110,14 +110,25 @@
           <label><input id="viralXhs" type="checkbox" checked> 小红书（互动=点赞+收藏）</label></fieldset>
         <label for="viralKeywords">关键词（逗号分隔，最多 5 个；留空使用配置，默认 AI）</label>
         <input id="viralKeywords" placeholder="例如：AI，科普" maxlength="404">
-        <p class="muted">默认：抖音 ≤5万粉、≥1万互动、≥3倍；小红书 ≤1万粉、≥1000互动、≥1倍。近14天，缺发布时间跳过。实际采用门槛见结果。</p>
+        <div class="viral-slider">
+          <label for="viralTier">筛选松紧 <strong id="viralTierName">宽松</strong></label>
+          <input id="viralTier" type="range" min="0" max="4" step="1" value="3" aria-valuetext="宽松">
+          <div class="viral-ticks" aria-hidden="true"><span>最严</span><span>严选</span><span>适中</span><span>宽松</span><span>最松</span></div>
+          <p class="muted">左右拖动，免费重筛本批数据。默认宽松，适合找灵感。</p>
+        </div>
+        <details class="viral-advanced"><summary>高级门槛</summary>
+          <p class="muted">手改后显示「自定义」；再次拖条会覆盖四项数字。天数是本地筛选范围；抖音低粉榜源仍约 7 天，调到 30 天不扩大源覆盖。</p>
+          <div id="viralThresholds"></div>
+        </details>
         <p class="muted">查询使用 TikHub 额度，不下载媒体。默认最多 24 次逻辑调用（重试另计），仅查每关键词首屏。</p>
-        <button class="button primary" id="viralSearch" type="submit">查候选（消耗额度）</button>
+        <button class="button primary" id="viralSearch" type="submit">查询（消耗额度）</button>
         <a href="#/settings" class="quiet-link">配置 TikHub</a>
       </form>
       <p id="viralStatus" role="status" aria-live="polite"></p>
-      <p class="muted">窄屏可左右滑动表格，查看互动与倍数。</p>
-      <div class="viral-table-wrap"><table class="viral-table"><thead><tr><th>选择</th><th>标题 / 作者</th><th>粉丝</th><th>互动</th><th>倍数</th><th>发布</th></tr></thead><tbody id="viralRows"></tbody></table></div>
+      <p id="viralCounts" role="status" aria-live="polite"></p>
+      <label><input id="viralShowPool" type="checkbox"> 看本批参考（含未达标与待核）</label>
+      <p class="muted">严选、本档与待核均是本批参考的子集，计数不相加。缺粉或日期仅待核，不算过线。未知粉不会随拖条自动补查；更换平台或关键词后需点「重新查询」。窄屏可左右滑动表格。</p>
+      <div class="viral-table-wrap"><table class="viral-table"><thead><tr><th>选择</th><th>标题 / 作者</th><th>粉丝</th><th>互动</th><th>倍数</th><th>发布</th><th>档 / 原因</th></tr></thead><tbody id="viralRows"></tbody></table></div>
       <div class="viral-save"><label><input type="checkbox" id="viralAll"> 全选未入库</label>
         <label><input type="checkbox" id="viralTranscribe"> 入库时转写（消耗转写额度）</label>
         <button class="button primary" id="viralSave" type="button" disabled>勾选后入库</button></div>
@@ -130,6 +141,7 @@
     </section>
   </main>
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-  <script src="/app.js?v=20261028-viral"></script>
+  <script src="/viral-filter.js?v=20261028-slider"></script>
+  <script src="/app.js?v=20261028-slider"></script>
 </body>
 </html>

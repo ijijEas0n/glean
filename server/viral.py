@@ -2,7 +2,7 @@
 
 抖音互动仅点赞，小红书互动为点赞+收藏。倍数=互动/max(粉丝,1)。
 评分纯函数不访问网络；拉源、补粉、查本地存在性单独处理。
-未知粉丝一律丢弃；缺失发布时间默认跳过（可配置放行），不从作品 ID 猜时间。
+未知粉丝、缺失日期留在参考池并标待核，不从作品 ID 猜时间。
 """
 from __future__ import annotations
 
@@ -20,23 +20,36 @@ from urllib.parse import urlsplit, urlencode
 
 PLATFORMS = ("douyin", "xiaohongshu")
 DEFAULTS = {
+    "tier": 3,
     "enabled": True,
     "max_calls": 24,
     "douyin": {
-        "max_fans": 50000, "min_interactions": 10000, "min_multiplier": 3,
+        "max_fans": 50000, "min_interactions": 1000, "min_multiplier": 0.3,
         "max_age_days": 14, "allow_missing_date": False, "keywords": ["AI"],
         "source": "lowfan",
         "path": "/api/v1/douyin/billboard/fetch_hot_total_low_fan_list",
         "user_path": "/api/v1/douyin/app/v3/handler_user_profile",
     },
     "xiaohongshu": {
-        "max_fans": 10000, "min_interactions": 1000, "min_multiplier": 1,
+        "max_fans": 10000, "min_interactions": 300, "min_multiplier": 0.1,
         "max_age_days": 14, "allow_missing_date": False, "keywords": ["AI"],
         "path": "/api/v1/xiaohongshu/app_v2/search_notes",
         "user_path": "/api/v1/xiaohongshu/app_v2/get_user_info",
     },
 }
 THRESHOLDS = ("max_fans", "min_interactions", "min_multiplier", "max_age_days")
+
+TIER_NAMES = ("最严", "严选", "适中", "宽松", "最松")
+PRESETS = {
+    "douyin": ((30000, 20000, 5, 7), (50000, 10000, 3, 14),
+               (50000, 3000, 1, 14), (50000, 1000, 0.3, 14), (100000, 300, 0.1, 30)),
+    "xiaohongshu": ((5000, 2000, 2, 7), (10000, 1000, 1, 14),
+                    (10000, 500, 0.5, 14), (10000, 300, 0.1, 14), (30000, 100, 0.05, 30)),
+}
+
+
+def preset(platform: str, tier: int) -> dict:
+    return dict(zip(THRESHOLDS, PRESETS[platform][tier]))
 
 
 def count(value: Any) -> int | None:
@@ -81,13 +94,27 @@ def score_item(item: dict, rules: dict | None = None, *, now: datetime | None = 
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
     age = (current - stamp).total_seconds() / 86400 if stamp else None
-    passed = (fans is not None and interactions is not None and multiplier is not None
-              and fans <= rules["max_fans"] and interactions >= rules["min_interactions"]
-              and multiplier >= rules["min_multiplier"]
-              and ((age is None and rules["allow_missing_date"])
-                   or (age is not None and 0 <= age <= rules["max_age_days"])))
+    reasons = []
+    if fans is None:
+        reasons.append("粉丝待核")
+    elif fans > rules["max_fans"]:
+        reasons.append("粉丝超上限")
+    if interactions is None:
+        reasons.append("互动待核")
+    elif interactions < rules["min_interactions"]:
+        reasons.append("互动不足")
+    if multiplier is not None and multiplier < rules["min_multiplier"]:
+        reasons.append("倍数不足")
+    if age is None:
+        reasons.append("日期待核")
+    elif age < 0:
+        reasons.append("日期异常")
+    elif age > rules["max_age_days"]:
+        reasons.append("超出本地天数")
     return {**item, "fans": fans, "interactions": interactions, "multiplier": multiplier,
-            "published_at": stamp.isoformat() if stamp else None, "age_days": age, "passed": bool(passed)}
+            "published_at": stamp.isoformat() if stamp else None, "age_days": age,
+            "passed": not reasons, "fail_reasons": reasons,
+            "pending": fans is None or interactions is None or age is None}
 
 
 def passes_threshold(item: dict, rules: dict | None = None, *, now: datetime | None = None) -> bool:
@@ -115,6 +142,10 @@ def prepare(payload: dict) -> dict:
     cap = result["max_calls"]
     if isinstance(cap, bool) or not isinstance(cap, int) or not 1 <= cap <= 50:
         raise ValueError("viral.max_calls 必须是 1–50 的整数")
+    tier = payload.get("tier", result["tier"])
+    if isinstance(tier, bool) or not isinstance(tier, int) or not 0 <= tier <= 4:
+        raise ValueError("tier 必须是 0–4 的整数")
+    result["tier"] = tier
     overrides = payload.get("thresholds", {})
     if not isinstance(overrides, dict) or any(k not in PLATFORMS for k in overrides):
         raise ValueError("thresholds 必须按平台提供")
@@ -124,7 +155,11 @@ def prepare(payload: dict) -> dict:
             raise ValueError("平台配置与门槛必须是对象")
         if any(k not in (*THRESHOLDS, "allow_missing_date") for k in patch):
             raise ValueError("未知门槛字段")
-        rule = {**DEFAULTS[p], **saved, **patch}
+        # 显式选档覆盖历史数字；未选档时仍兼容已保存的自定义门槛。
+        rule = {**DEFAULTS[p], **preset(p, tier), **saved}
+        if "tier" in payload:
+            rule.update(preset(p, tier))
+        rule.update(patch)
         for k in THRESHOLDS:
             v = rule[k]
             if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0:
@@ -230,23 +265,29 @@ def profile_fans(payload: dict) -> int | None:
 def preview(settings: dict, progress=None) -> dict:
     """每平台每关键词仅首屏，最多扫描 200 条；补粉缓存仅本次任务有效。"""
     calls, scanned = 0, 0
-    warnings, candidates, seen, fans_cache = [], [], set(), {}
+    warnings, pool, seen, fans_cache, fans_notes = [], [], set(), {}, {}
+    now = datetime.now(timezone.utc)
+    incomplete = False
+    authors_checked = 0
 
     def call(path, params, *, post=False):
-        nonlocal calls
+        nonlocal calls, incomplete
         if calls >= settings["max_calls"]:
-            raise ValueError("已达本次 TikHub 调用上限，结果可能不完整")
+            incomplete = True
+            raise ValueError("已达本次 TikHub 调用上限，结果未完整核对")
         calls += 1
         return tikhub.post(path, params) if post else tikhub.get(path, params)
 
+    # 先为全部平台/关键词取首屏，再花剩余预算补粉。
     for platform in settings["platforms"]:
         rule = settings[platform]
         for keyword in rule["keywords"]:
             if calls >= settings["max_calls"] or scanned >= 200:
-                warnings.append("已达调用或扫描上限，结果可能不完整")
+                incomplete = True
+                warnings.append("已达调用或扫描上限，结果未完整核对")
                 break
             if progress:
-                progress("正在筛选候选", min(90, 10 + calls), f"{platform} · {keyword}")
+                progress("正在查询本批参考", min(90, 10 + calls), f"{platform} · {keyword}")
             if platform == "douyin":
                 query = ({"page": 1, "page_size": 50, "date_window": 168, "keyword": keyword}
                          if rule["source"] == "lowfan" else {"keyword": keyword, "cursor": 0})
@@ -255,47 +296,85 @@ def preview(settings: dict, progress=None) -> dict:
             try:
                 rows = rows_from(call(rule["path"], query, post=platform == "douyin"))
             except tikhub.TikHubError as exc:
-                # 鉴权/余额/网络问题要成为任务失败，避免用户误认成“零候选”。
                 raise tikhub.TikHubError(f"{platform} 拉源失败：{exc}") from exc
+            if len(rows) > 200 - scanned:
+                incomplete = True
+                warnings.append("已达扫描上限，结果未完整核对")
             for obj in rows[:200 - scanned]:
                 scanned += 1
                 item = normalize(platform, obj)
-                if not item or item["key"] in seen:
-                    continue
-                seen.add(item["key"])
-                # 先按互动和时效排除，省下无意义的补粉调用。
-                probe = score_item({**item, "fans": 0}, {**rule, "min_multiplier": 0})
-                if probe["interactions"] is None or probe["interactions"] < rule["min_interactions"]:
-                    continue
-                if not probe["passed"]:
-                    continue
-                if platform == "xiaohongshu" or item["fans"] is None:
-                    author_id = item["author_id"]
-                    if not author_id:
-                        warnings.append(f"{item['key']} 缺作者 ID，已跳过")
-                        continue
-                    cache_key = (platform, author_id)
-                    if cache_key not in fans_cache:
-                        try:
-                            param = "user_id" if platform == "xiaohongshu" else "sec_user_id"
-                            fans_cache[cache_key] = profile_fans(call(rule["user_path"], {param: author_id}))
-                        except (tikhub.TikHubError, ValueError) as exc:
-                            warnings.append(f"{platform} 补粉失败，跳过该作者：{exc}")
-                            fans_cache[cache_key] = None
-                    item["fans"] = fans_cache[cache_key]
-                    item["raw"]["fans_source"] = "profile"
-                if item["fans"] is None:
-                    warnings.append(f"{item['key']} 粉丝数未知，已跳过")
-                    continue
-                scored = score_item(item, rule)
-                if scored["passed"]:
-                    local_id = store.find_same_work(platform, item["id"])
-                    candidates.append({**scored, "local": bool(local_id), "item_id": local_id})
-    candidates.sort(key=lambda x: x["multiplier"], reverse=True)
-    return {"candidates": candidates[:settings["limit"]], "warnings": list(dict.fromkeys(warnings)),
-            "scanned": scanned, "calls": calls, "limit": settings["limit"],
-            "thresholds": {p: {k: settings[p][k] for k in (*THRESHOLDS, "allow_missing_date")}
-                           for p in settings["platforms"]}}
+                if item and item["key"] not in seen:
+                    seen.add(item["key"])
+                    pool.append(item)
+
+    # 互动高的优先；仅当前档互动/日期有希望通过的作者才主动补粉。
+    pool.sort(key=lambda x: score_item(x, settings[x["platform"]], now=now)["interactions"] or 0, reverse=True)
+    for item in pool:
+        platform = item["platform"]
+        rule = settings[platform]
+        probe = score_item(item, rule, now=now)
+        eligible = (probe["interactions"] is not None and probe["interactions"] >= rule["min_interactions"]
+                    and probe["age_days"] is not None and 0 <= probe["age_days"] <= rule["max_age_days"])
+        author_id = item["author_id"]
+        cache_key = (platform, author_id)
+        item["fans_note"] = ""
+        if platform == "xiaohongshu" or item["fans"] is None:
+            if author_id and cache_key in fans_cache:
+                item["fans"] = fans_cache[cache_key]
+                item["raw"]["fans_source"] = "profile"
+            elif eligible and author_id:
+                try:
+                    param = "user_id" if platform == "xiaohongshu" else "sec_user_id"
+                    if calls >= settings["max_calls"]:
+                        fans_notes[cache_key] = "调用上限，未补查"
+                    else:
+                        authors_checked += 1
+                    fans_cache[cache_key] = profile_fans(call(rule["user_path"], {param: author_id}))
+                except (tikhub.TikHubError, ValueError) as exc:
+                    warnings.append(f"{platform} 补粉失败，粉丝待核：{exc}")
+                    fans_cache[cache_key] = None
+                item["fans"] = fans_cache[cache_key]
+                item["raw"]["fans_source"] = "profile"
+            elif platform == "xiaohongshu":
+                # 保持旧版红书必须以作者接口核粉的口径。
+                item["fans"] = None
+            if item["fans"] is None:
+                item["fans_note"] = fans_notes.get(cache_key) or (
+                    "补查无结果或失败" if cache_key in fans_cache else
+                    "缺作者 ID" if not author_id else "本次未补查")
+        local_id = store.find_same_work(platform, item["id"])
+        item.update(local=bool(local_id), item_id=local_id)
+
+    if calls >= settings["max_calls"] or scanned >= 200:
+        incomplete = True
+        warnings.append("已达调用或扫描上限，结果未完整核对")
+    scored_pool = []
+    for item in pool:
+        scored = score_item(item, settings[item["platform"]], now=now)
+        strict = score_item(item, preset(item["platform"], 1), now=now)["passed"]
+        scored.update(strict_pass=strict, pass_level=("pending" if scored["pending"] else
+                      "strict" if strict else "tier" if scored["passed"] else "pool"))
+        scored_pool.append(scored)
+    candidates = sorted((x for x in scored_pool if x["passed"]), key=lambda x: x["multiplier"], reverse=True)
+    thresholds = {p: {k: settings[p][k] for k in (*THRESHOLDS, "allow_missing_date")}
+                  for p in settings["platforms"]}
+    custom = any(any(settings[p][k] != preset(p, settings["tier"])[k] for k in THRESHOLDS)
+                 for p in settings["platforms"])
+    return {"candidates": candidates[:settings["limit"]], "pool": scored_pool,
+            "tier": settings["tier"], "preset": {"id": settings["tier"], "name": "自定义" if custom else TIER_NAMES[settings["tier"]]},
+            "thresholds": thresholds, "thresholds_applied": thresholds,
+            "presets": {p: [preset(p, t) for t in range(5)] for p in PLATFORMS},
+            "evaluated_at": now.isoformat(),
+            "stats": {"scanned": scanned, "recognized": len(scored_pool), "pool": len(scored_pool),
+                      "strict_pass": sum(x["strict_pass"] for x in scored_pool), "tier_pass": len(candidates),
+                      "pending": sum(x["pending"] for x in scored_pool),
+                      "pending_fans": sum(x["fans"] is None for x in scored_pool),
+                      "pending_date": sum(x["age_days"] is None for x in scored_pool),
+                      "pending_interactions": sum(x["interactions"] is None for x in scored_pool)},
+            "coverage": {"incomplete": incomplete, "authors_checked": authors_checked,
+                         "source_window_hours": {p: 168 if p == "douyin" and settings[p]["source"] == "lowfan" else None
+                                                 for p in settings["platforms"]}},
+            "warnings": list(dict.fromkeys(warnings)), "scanned": scanned, "calls": calls, "limit": settings["limit"]}
 
 
 def selected_items(payload: dict) -> tuple[list[dict], list[dict]]:
