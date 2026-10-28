@@ -23,6 +23,8 @@ DEFAULTS = {
     "tier": 3,
     "enabled": True,
     "max_calls": 24,
+    "source_window_hours": 168,
+    "max_pages": 2,
     "douyin": {
         "max_fans": 50000, "min_interactions": 1000, "min_multiplier": 0.3,
         "max_age_days": 14, "allow_missing_date": False, "keywords": ["AI"],
@@ -142,6 +144,11 @@ def prepare(payload: dict) -> dict:
     cap = result["max_calls"]
     if isinstance(cap, bool) or not isinstance(cap, int) or not 1 <= cap <= 50:
         raise ValueError("viral.max_calls 必须是 1–50 的整数")
+    for name, low, high in (("source_window_hours", 24, 720), ("max_pages", 1, 3)):
+        value = payload.get(name, result[name])
+        if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+            raise ValueError(f"{name} 必须是 {low}–{high} 的整数")
+        result[name] = value
     tier = payload.get("tier", result["tier"])
     if isinstance(tier, bool) or not isinstance(tier, int) or not 0 <= tier <= 4:
         raise ValueError("tier 必须是 0–4 的整数")
@@ -167,10 +174,10 @@ def prepare(payload: dict) -> dict:
         if not isinstance(rule["allow_missing_date"], bool):
             raise ValueError("allow_missing_date 必须是布尔值")
         keywords = payload.get("keywords", rule["keywords"])
-        if not isinstance(keywords, list) or not 1 <= len(keywords) <= 5 or any(
-            not isinstance(k, str) or not k.strip() or len(k) > 80 for k in keywords
+        if not isinstance(keywords, list) or not 1 <= len(keywords) <= 20 or any(
+            not isinstance(k, str) or not k.strip() or len(k.strip()) > 80 for k in keywords
         ):
-            raise ValueError("keywords 需为 1–5 个非空关键词，每个最多 80 字")
+            raise ValueError("keywords 需为 1–20 个非空关键词，每个最多 80 字")
         rule["keywords"] = list(dict.fromkeys(k.strip() for k in keywords))
         for k in ("path", "user_path"):
             if not isinstance(rule[k], str) or not re.fullmatch(rf"/api/v1/{p}/[A-Za-z0-9_/]+", rule[k]):
@@ -298,7 +305,7 @@ def profile_fans(payload: dict) -> int | None:
 
 
 def preview(settings: dict, progress=None) -> dict:
-    """每平台每关键词仅首屏，最多扫描 200 条；补粉缓存仅本次任务有效。"""
+    """按页轮询各平台关键词，最多扫描 300 条；补粉缓存仅本次任务有效。"""
     calls, scanned = 0, 0
     warnings, pool, seen, fans_cache, fans_notes = [], [], set(), {}, {}
     now = datetime.now(timezone.utc)
@@ -313,34 +320,48 @@ def preview(settings: dict, progress=None) -> dict:
         calls += 1
         return tikhub.post(path, params) if post else tikhub.get(path, params)
 
-    # 先为全部平台/关键词取首屏，再花剩余预算补粉。
-    for platform in settings["platforms"]:
-        rule = settings[platform]
-        for keyword in rule["keywords"]:
-            if calls >= settings["max_calls"] or scanned >= 200:
-                incomplete = True
-                warnings.append("已达调用或扫描上限，结果未完整核对")
-                break
-            if progress:
-                progress("正在查询本批参考", min(90, 10 + calls), f"{platform} · {keyword}")
-            if platform == "douyin":
-                query = ({"page": 1, "page_size": 50, "date_window": 168, "keyword": keyword}
-                         if rule["source"] == "lowfan" else {"keyword": keyword, "cursor": 0})
-            else:
-                query = {"keyword": keyword, "page": 1, "sort_type": "popularity_descending"}
-            try:
-                rows = rows_from(call(rule["path"], query, post=platform == "douyin"))
-            except tikhub.TikHubError as exc:
-                raise tikhub.TikHubError(f"{platform} 拉源失败：{exc}") from exc
-            if len(rows) > 200 - scanned:
-                incomplete = True
-                warnings.append("已达扫描上限，结果未完整核对")
-            for obj in rows[:200 - scanned]:
-                scanned += 1
-                item = normalize(platform, obj)
-                if item and item["key"] not in seen:
-                    seen.add(item["key"])
-                    pool.append(item)
+    source_calls = {p: 0 for p in settings["platforms"]}
+    pages_by_keyword = {p: {k: 0 for k in settings[p]["keywords"]} for p in settings["platforms"]}
+    exhausted = set()
+    # 页码在最外层：先覆盖所有关键词首屏，有余量再深翻，最后补粉。
+    for page in range(1, settings["max_pages"] + 1):
+        for platform in settings["platforms"]:
+            rule = settings[platform]
+            for keyword in rule["keywords"]:
+                if (platform, keyword) in exhausted:
+                    continue
+                if platform == "douyin" and rule["source"] == "search" and page > 1:
+                    incomplete = True
+                    warnings.append("抖音自定义 search 源仅查首屏，深翻仅支持 lowfan 源")
+                    continue
+                if calls >= settings["max_calls"] or scanned >= 300:
+                    incomplete = True
+                    warnings.append("已达调用或扫描上限，结果未完整核对")
+                    continue
+                if progress:
+                    progress("正在查询本批参考", min(90, 10 + calls), f"{platform} · {keyword} · 第{page}页")
+                if platform == "douyin":
+                    query = ({"page": page, "page_size": 50, "date_window": settings["source_window_hours"], "keyword": keyword}
+                             if rule["source"] == "lowfan" else {"keyword": keyword, "cursor": 0})
+                else:
+                    query = {"keyword": keyword, "page": page, "sort_type": "popularity_descending"}
+                try:
+                    rows = rows_from(call(rule["path"], query, post=platform == "douyin"))
+                except tikhub.TikHubError as exc:
+                    raise tikhub.TikHubError(f"{platform} 拉源失败：{exc}") from exc
+                source_calls[platform] += 1
+                pages_by_keyword[platform][keyword] = page
+                if not rows:
+                    exhausted.add((platform, keyword))
+                if len(rows) > 300 - scanned:
+                    incomplete = True
+                    warnings.append("已达扫描上限，结果未完整核对")
+                for obj in rows[:300 - scanned]:
+                    scanned += 1
+                    item = normalize(platform, obj)
+                    if item and item["key"] not in seen:
+                        seen.add(item["key"])
+                        pool.append(item)
 
     # 互动高的优先；仅当前档互动/日期有希望通过的作者才主动补粉。
     pool.sort(key=lambda x: score_item(x, settings[x["platform"]], now=now)["interactions"] or 0, reverse=True)
@@ -380,7 +401,7 @@ def preview(settings: dict, progress=None) -> dict:
         local_id = store.find_same_work(platform, item["id"])
         item.update(local=bool(local_id), item_id=local_id)
 
-    if calls >= settings["max_calls"] or scanned >= 200:
+    if calls >= settings["max_calls"] or scanned >= 300:
         incomplete = True
         warnings.append("已达调用或扫描上限，结果未完整核对")
     scored_pool = []
@@ -407,7 +428,10 @@ def preview(settings: dict, progress=None) -> dict:
                       "pending_date": sum(x["age_days"] is None for x in scored_pool),
                       "pending_interactions": sum(x["interactions"] is None for x in scored_pool)},
             "coverage": {"incomplete": incomplete, "authors_checked": authors_checked,
-                         "source_window_hours": {p: 168 if p == "douyin" and settings[p]["source"] == "lowfan" else None
+                         "keywords": {p: settings[p]["keywords"] for p in settings["platforms"]},
+                         "max_pages": settings["max_pages"], "pages_by_keyword": pages_by_keyword,
+                         "source_calls": source_calls, "scan_limit": 300,
+                         "source_window_hours": {p: settings["source_window_hours"] if p == "douyin" and settings[p]["source"] == "lowfan" else None
                                                  for p in settings["platforms"]}},
             "warnings": list(dict.fromkeys(warnings)), "scanned": scanned, "calls": calls, "limit": settings["limit"]}
 

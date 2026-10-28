@@ -913,6 +913,16 @@ async function loadCollectDefaults() {
     if (!viralDirty) {
       const t = state.config.viral?.tier;
       if (Number.isInteger(t) && t >= 0 && t <= 4) $('viralTier').value = t;
+      const hours = state.config.viral?.source_window_hours;
+      if (Number.isInteger(hours) && hours >= 24 && hours <= 720) {
+        if (![24, 72, 168, 336, 720].includes(hours)) {
+          const option = node('option', '', `${hours} 小时`); option.value = hours;
+          $('viralSourceWindow').append(option);
+        }
+        $('viralSourceWindow').value = hours;
+      }
+      const pages = state.config.viral?.max_pages;
+      if (Number.isInteger(pages) && pages >= 1 && pages <= 3) $('viralMaxPages').value = pages;
       applyViralTier();
       for (const p of ['douyin', 'xiaohongshu']) {
         for (const k of ViralFilter.keys) {
@@ -1036,6 +1046,7 @@ function initViralControls() {
     });
     $('viralThresholds').append(group);
   }
+  for (const id of ['viralKeywords', 'viralSourceWindow', 'viralMaxPages']) $(id).addEventListener('input', () => { viralDirty = true; });
   $('viralTier').addEventListener('input', () => { viralDirty = true; applyViralTier(); });
   $('viralShowPool').addEventListener('change', refilterViral);
   applyViralTier();
@@ -1058,7 +1069,13 @@ function refilterViral() {
   const count = pool.filter(x => x.passed).length;
   const pending = pool.filter(x => x.pending).length;
   $('viralCounts').textContent = `严选 ${pool.filter(x => x.strict_pass).length} · 本档 ${count} · 本批参考 ${pool.length} · 待核 ${pending}`;
-  const base = `扫描 ${viralBatch.scanned || 0} 条，可识别去重 ${pool.length} 条。同批重筛不消耗查询额度。`;
+  const coverage = viralBatch.coverage || {};
+  const sources = Object.entries(coverage.keywords || {}).map(([p, words]) => {
+    const pages = coverage.pages_by_keyword?.[p] || {};
+    return `${platformLabel(p)}：${words.map(k => `${k}（${pages[k] || 0}页）`).join('、')}，拉源 ${coverage.source_calls?.[p] || 0} 次`;
+  }).join('；');
+  const windowHours = coverage.source_window_hours?.douyin;
+  const base = `${sources ? sources + '。' : ''}${windowHours ? `抖音源时间窗 ${windowHours} 小时。` : ''}每词最多 ${coverage.max_pages || 1} 页，扫描 ${viralBatch.scanned || 0} 条，可识别去重 ${pool.length} 条，TikHub 调用 ${viralBatch.calls || 0} 次（含补粉，重试另计）。同批重筛不消耗查询额度。`;
   $('viralStatus').textContent = base + (count ? '' : ' 当前档没有候选，可往宽松拖或看本批参考；不能据此判断关键词没有好内容。')
     + (viralBatch.coverage?.incomplete ? ' 覆盖不全，结果未完整核对。' : '') + (viralBatch.warnings || []).join('；');
   viralRows = pool.filter(x => $('viralShowPool').checked || x.passed)
@@ -1121,11 +1138,14 @@ async function searchViral(event) {
   const platforms = []; if ($('viralDouyin').checked) platforms.push('douyin'); if ($('viralXhs').checked) platforms.push('xiaohongshu');
   if (!platforms.length) { $('viralStatus').textContent = '请至少选择一个平台'; return; }
   viralDirty = true;
-  const keywords = $('viralKeywords').value.split(/[,，\n]/).map(x => x.trim()).filter(Boolean);
+  const keywords = [...new Set($('viralKeywords').value.split(/[,，\r\n]/).map(x => x.trim()).filter(Boolean))];
+  if (keywords.length > 20 || keywords.some(k => [...k].length > 80)) {
+    $('viralStatus').textContent = '最多 20 个关键词，每个最多 80 字'; return;
+  }
   viralBusy = true; viralBatch = null; $('viralCounts').textContent = ''; viralRows = []; viralSelected.clear(); renderViral();
   $('viralStatus').textContent = '正在查询候选，可能需要几分钟…';
   try {
-    const r = await api('/api/viral/preview', { method: 'POST', body: { platforms, ...(keywords.length ? { keywords } : {}), tier: Number($('viralTier').value), thresholds: viralRules(), limit: 100 } });
+    const r = await api('/api/viral/preview', { method: 'POST', body: { platforms, source_window_hours: Number($('viralSourceWindow').value), max_pages: Number($('viralMaxPages').value), ...(keywords.length ? { keywords } : {}), tier: Number($('viralTier').value), thresholds: viralRules(), limit: 100 } });
     watchJob(r.job_id, job => {
       if (!['done', 'partial', 'failed'].includes(job.state)) return;
       viralBusy = false;

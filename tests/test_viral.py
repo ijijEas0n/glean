@@ -111,7 +111,88 @@ class ViralTests(unittest.TestCase):
         self.assertEqual(empty['cover'], '')
 
     def settings(self, platforms=None, **extra):
-        return viral.prepare({'platforms': platforms or list(viral.PLATFORMS), **extra})
+        return viral.prepare({'platforms': platforms or list(viral.PLATFORMS), 'max_pages': 1, **extra})
+
+    def test_depth_defaults_and_validation(self):
+        settings = viral.prepare({})
+        self.assertEqual(settings['source_window_hours'], 168)
+        self.assertEqual(settings['max_pages'], 2)
+        for name, values in {'source_window_hours': [23, 721, True, 168.5, '168', None],
+                             'max_pages': [0, 4, True, 1.5, '2', None]}.items():
+            for value in values:
+                with self.subTest(name=name, value=value), self.assertRaises(ValueError):
+                    self.settings(**{name: value})
+        for hours in (24, 72, 168, 336, 720):
+            self.assertEqual(self.settings(source_window_hours=hours)['source_window_hours'], hours)
+        with patch.object(viral, 'load_config', return_value={'viral': {'max_pages': 3, 'source_window_hours': 720}}):
+            self.assertEqual(viral.prepare({})['max_pages'], 3)
+            self.assertEqual(viral.prepare({})['source_window_hours'], 720)
+            self.assertEqual(viral.prepare({'source_window_hours': 24})['source_window_hours'], 24)
+        self.get.assert_not_called(); self.post.assert_not_called()
+
+    def test_batch_keywords_limit_strip_and_dedup(self):
+        words = [f'词{i}' for i in range(20)]
+        self.assertEqual(self.settings(keywords=words)['douyin']['keywords'], words)
+        self.assertEqual(self.settings(keywords=[' AI ', 'AI', ' 科普 '])['douyin']['keywords'], ['AI', '科普'])
+        self.assertEqual(self.settings(keywords=[' ' + '词'*80 + ' '])['douyin']['keywords'], ['词'*80])
+        for words in ([str(i) for i in range(21)], ['词'*81], [' '], [1]):
+            with self.subTest(words=words), self.assertRaises(ValueError):
+                self.settings(keywords=words)
+
+    def test_multiple_pages_parameters_order_and_coverage(self):
+        order = []
+        def post(path, params):
+            order.append(('douyin', params.copy()))
+            return {'data': {'objs': [dy()]}}
+        def get(path, params):
+            if path.endswith('search_notes'):
+                order.append(('xiaohongshu', params.copy()))
+                return {'data': {'items': [xhs()]}}
+            return {'data': {'fans': 1000}}
+        self.post.side_effect = post; self.get.side_effect = get
+        result = viral.preview(self.settings(keywords=['A', 'B'], max_pages=3, source_window_hours=720))
+        expected = [(p, k, page) for page in (1, 2, 3) for p in viral.PLATFORMS for k in ('A', 'B')]
+        self.assertEqual([(p, q['keyword'], q['page']) for p, q in order], expected)
+        for p, query in order:
+            if p == 'douyin':
+                self.assertEqual(query['date_window'], 720)
+                self.assertEqual(query['page_size'], 50)
+            else:
+                self.assertEqual(query['sort_type'], 'popularity_descending')
+        self.assertEqual(result['scanned'], 12)
+        self.assertEqual(len(result['pool']), 2)
+        self.assertEqual(result['calls'], 13)
+        self.assertEqual(result['coverage']['source_calls'], {'douyin': 6, 'xiaohongshu': 6})
+        self.assertEqual(result['coverage']['pages_by_keyword']['douyin'], {'A': 3, 'B': 3})
+        self.assertEqual(result['coverage']['source_window_hours'], {'douyin': 720, 'xiaohongshu': None})
+        self.assertFalse(result['coverage']['incomplete'])
+
+    def test_budget_prioritizes_keywords_before_deeper_pages_and_profiles(self):
+        order = []
+        def post(path, params):
+            order.append(('douyin', params['keyword'], params['page']))
+            return {'data': {'objs': [dy(fans_cnt=None, sec_uid='author')]}}
+        def get(path, params):
+            self.assertTrue(path.endswith('search_notes'), '不应先花预算补粉')
+            order.append(('xiaohongshu', params['keyword'], params['page']))
+            return {'data': {'items': [xhs()]}}
+        self.post.side_effect = post; self.get.side_effect = get
+        settings = self.settings(keywords=['A', 'B'], max_pages=3)
+        settings['max_calls'] = 5
+        result = viral.preview(settings)
+        self.assertEqual(order, [('douyin', 'A', 1), ('douyin', 'B', 1),
+                                ('xiaohongshu', 'A', 1), ('xiaohongshu', 'B', 1), ('douyin', 'A', 2)])
+        self.assertEqual(result['calls'], 5)
+        self.assertEqual(result['coverage']['authors_checked'], 0)
+        self.assertTrue(result['coverage']['incomplete'])
+        self.assertIn('上限', ' '.join(result['warnings']))
+
+    def test_empty_page_stops_only_that_keyword(self):
+        self.post.side_effect = lambda path, q: {'data': {'objs': [] if q['keyword'] == 'A' else [dy()]}}
+        result = viral.preview(self.settings(['douyin'], keywords=['A', 'B'], max_pages=3))
+        self.assertEqual([(c.args[1]['keyword'], c.args[1]['page']) for c in self.post.call_args_list],
+                         [('A', 1), ('B', 1), ('B', 2), ('B', 3)])
+        self.assertEqual(result['coverage']['pages_by_keyword']['douyin'], {'A': 1, 'B': 3})
 
     def test_prepare_validates_before_network(self):
         for payload in ({'limit': 0}, {'limit': True}, {'platforms': ['other']}, {'keywords': []},
@@ -223,6 +304,8 @@ class ViralTests(unittest.TestCase):
             job = manager.get(handler._json.call_args.args[0]['job_id']); wait_for(job, timeout=3)
             self.assertEqual(job.state, 'done')
             self.assertEqual(len(job.to_dict()['viral']['candidates']), 1)
+            self.assertEqual([c.args[1]['page'] for c in self.post.call_args_list], [1, 2])
+            self.assertEqual(job.to_dict()['viral']['coverage']['max_pages'], 2)
             self.assertEqual(job.item_id, '')
             self.assertTrue(any(x['state'] == 'skipped' for x in job.stages))
             save.assert_not_called()
@@ -342,11 +425,11 @@ class ViralTests(unittest.TestCase):
 
     def test_scan_cap_and_limit_do_not_truncate_pool(self):
         self.post.side_effect = None
-        self.post.return_value = {'data': {'objs': [dy(str(i)) for i in range(210)]}}
+        self.post.return_value = {'data': {'objs': [dy(str(i)) for i in range(310)]}}
         result = viral.preview(self.settings(['douyin'], limit=1))
-        self.assertEqual(len(result['pool']), 200)
+        self.assertEqual(len(result['pool']), 300)
         self.assertEqual(len(result['candidates']), 1)
-        self.assertEqual(result['stats']['tier_pass'], 200)
+        self.assertEqual(result['stats']['tier_pass'], 300)
         self.assertTrue(result['coverage']['incomplete'])
 
     @unittest.skipUnless(shutil.which('node'), '需要 node 验证前端纯函数')

@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#f7f7f5">
   <title>拾取 · 收集和阅读</title>
-  <link rel="stylesheet" href="/style.css?v=viral-cover-20261028">
+  <link rel="stylesheet" href="/style.css?v=viral-depth-20261029">
 </head>
 <body>
   <aside class="sidebar">
@@ -108,8 +108,15 @@
       <form id="viralForm" class="viral-form">
         <fieldset><legend>平台</legend><label><input id="viralDouyin" type="checkbox" checked> 抖音（互动=点赞）</label>
           <label><input id="viralXhs" type="checkbox" checked> 小红书（互动=点赞+收藏）</label></fieldset>
-        <label for="viralKeywords">关键词（逗号分隔，最多 5 个；留空使用配置，默认 AI）</label>
-        <input id="viralKeywords" placeholder="例如：AI，科普" maxlength="404">
+        <label for="viralKeywords">关键词（一次可贴一批，逗号或换行分隔，最多 20 个）</label>
+        <textarea id="viralKeywords" rows="3" placeholder="例如：AI，科普&#10;效率工具（留空使用配置，默认 AI）"></textarea>
+        <label for="viralSourceWindow">抖音拉榜时间窗
+          <select id="viralSourceWindow"><option value="24">24 小时（1 天）</option><option value="72">72 小时（3 天）</option><option value="168" selected>168 小时（7 天）</option><option value="336">336 小时（14 天）</option><option value="720">720 小时（30 天）</option></select>
+        </label>
+        <label for="viralMaxPages">每平台每关键词最多翻页
+          <select id="viralMaxPages"><option value="1">1 页</option><option value="2" selected>2 页</option><option value="3">3 页</option></select>
+        </label>
+        <p class="muted">时间窗决定抖音低粉榜拉多宽；小红书按热度搜索。下方门槛天数只过滤本批数据，不改变拉榜范围。</p>
         <div class="viral-slider">
           <label for="viralTier">筛选松紧 <strong id="viralTierName">宽松</strong></label>
           <input id="viralTier" type="range" min="0" max="4" step="1" value="3" aria-valuetext="宽松">
@@ -117,10 +124,10 @@
           <p class="muted">左右拖动，免费重筛本批数据。默认宽松，适合找灵感。</p>
         </div>
         <details class="viral-advanced"><summary>高级门槛</summary>
-          <p class="muted">手改后显示「自定义」；再次拖条会覆盖四项数字。天数是本地筛选范围；抖音低粉榜源仍约 7 天，调到 30 天不扩大源覆盖。</p>
+          <p class="muted">手改后显示「自定义」；再次拖条会覆盖四项数字。天数是本地筛选范围，源范围由上方「抖音拉榜时间窗」单独设置。</p>
           <div id="viralThresholds"></div>
         </details>
-        <p class="muted">查询使用 TikHub 额度，不下载媒体。默认最多 24 次逻辑调用（重试另计），仅查每关键词首屏。</p>
+        <p class="muted">查询使用 TikHub 额度，不下载媒体。默认最多 24 次逻辑调用（重试另计），默认每词最多 2 页、最多扫描 300 条；先覆盖每词首屏，再翻深页，最后补查粉丝。</p>
         <button class="button primary" id="viralSearch" type="submit">查询（消耗额度）</button>
         <a href="#/settings" class="quiet-link">配置 TikHub</a>
       </form>
@@ -142,6 +149,6 @@
   </main>
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
   <script src="/viral-filter.js?v=20261028-cover"></script>
-  <script src="/app.js?v=20261028-cover"></script>
+  <script src="/app.js?v=20261029-depth"></script>
 </body>
 </html>

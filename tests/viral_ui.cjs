@@ -60,3 +60,38 @@ if (!$('viralCounts').textContent.includes('重新查询')) throw Error('旧响�
 `, context);
 assert.equal(requests, 0);
 console.log('slider interactions: OK; network requests: 0');
+
+// 用本地桩接住真实查询请求，验证批量输入和源参数，不访问 TikHub。
+(async () => {
+  await vm.runInContext(`(async () => {
+    const submitted = [];
+    api = async (path, options) => { submitted.push({path, body:options.body}); return {job_id:'mock'}; };
+    watchJob = (id, callback) => callback({state:'done', viral:{pool:[], scanned:12, calls:9,
+      coverage:{keywords:{douyin:['AI','科普']}, source_window_hours:{douyin:720},
+        max_pages:3, pages_by_keyword:{douyin:{AI:3, '科普':2}}, source_calls:{douyin:5}}}});
+    $('viralDouyin').checked = true;
+    $('viralXhs').checked = true;
+    $('viralKeywords').value = ' AI，科普\\nAI ';
+    $('viralSourceWindow').value = '720';
+    $('viralMaxPages').value = '3';
+    await searchViral({preventDefault(){}});
+    if (submitted.length !== 1) throw Error('应只提交一次查询');
+    const body = submitted[0].body;
+    if (submitted[0].path !== '/api/viral/preview' || body.source_window_hours !== 720 || body.max_pages !== 3) throw Error('源参数');
+    if (JSON.stringify(body.keywords) !== JSON.stringify(['AI','科普'])) throw Error('批量拆词去重');
+    for (const text of ['AI（3页）','科普（2页）','720 小时','扫描 12 条','TikHub 调用 9 次']) {
+      if (!$('viralStatus').textContent.includes(text)) throw Error('摘要缺少：'+text);
+    }
+    $('viralKeywords').value = Array.from({length:20}, (_,i) => '词'+i).join('，');
+    await searchViral({preventDefault(){}});
+    if (submitted.length !== 2 || submitted[1].body.keywords.length !== 20) throw Error('20词应可提交');
+    $('viralKeywords').value += '，第21词';
+    await searchViral({preventDefault(){}});
+    if (submitted.length !== 2 || !$('viralStatus').textContent.includes('最多 20')) throw Error('21词应拒绝');
+    $('viralKeywords').value = '词'.repeat(81);
+    await searchViral({preventDefault(){}});
+    if (submitted.length !== 2) throw Error('超长关键词应拒绝');
+  })()`, context);
+  assert.equal(requests, 0);
+  console.log('batch query controls and summary: OK; network requests: 0');
+})().catch(error => { console.error(error); process.exitCode = 1; });
