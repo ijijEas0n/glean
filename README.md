@@ -163,6 +163,8 @@ library/
 | `POST /api/jobs` `{"url": ..., "options": {"download_media": true, "transcribe": true}}` | 提交抓取，返回 `job_id` |
 | `GET /api/jobs/<job_id>` | 轮询 `job.state`：`queued` / `running` / `done` / `partial` / `failed` |
 | `POST /api/preview` `{"url": <主页>, "options": {"limit": 50}}` | 博主主页先预览作品清单 |
+| `POST /api/viral/preview` `{"platforms":["douyin","xiaohongshu"],"keywords":["AI"],"limit":20}` | 低粉爆款候选筛选；202 返回 job_id，结果读 job.viral.candidates |
+| `POST /api/viral/save` `{"items":[{"platform":"douyin","id":"作品ID"}],"options":{"transcribe":false}}` | 只保存用户勾选的作品，复用批量 jobs；已有作品跳过下载 |
 
 `examples/SKILL.md` 是模板，里面有 `<GLEAN_HOST>`、`<GLEAN_ROOT>` 等占位符，**不能原样复制给 Agent**。在仓库根目录生成可用副本：
 
@@ -195,3 +197,24 @@ Agent 和 glean 不在同一台机器时加上 `--machine-label <机器名>`。�
 ## License
 
 MIT © 2026 迅仔
+
+## 低粉爆款候选
+
+在「收集 → 低粉爆款」选择平台、填写关键词，查询后看粉丝、互动和倍数，勾选再入库。
+预览会调用 TikHub 并消耗额度，但不下载媒体、不转写、不写入本地库；缺 TikHub Key 会提示去设置。
+这是**候选筛选，非爆款预测**。不做账号相对中位数 R、不抓评论、不把官方话题榜当作品爆款，公开核心不引入浏览器自动化或自行维护登录态。
+
+同时满足四个门槛才进入候选，倍数 = 互动 / max(粉丝, 1)：
+
+| 平台 | 粉丝上限 | 互动下限 | 倍数下限 | 发布时效 | 互动口径 |
+|---|---:|---:|---:|---:|---|
+| 抖音 | 50000 | 10000 | 3 | 14天 | 点赞 |
+| 小红书 | 10000 | 1000 | 1 | 14天 | 点赞+收藏 |
+
+缺发布时间默认跳过，粉丝未知跳过，小红书另查作者粉丝（失败丢弃并提示）。默认关键词 AI；每关键词仅查首屏，最多5关键词、200条扫描、24次逻辑调用（客户端重试另计）。不是全平台全量扫描，空候选不表示平台没有符合条件的作品。
+
+Agent：先请求 `/api/viral/preview`，每5秒轮询 `/api/jobs/<job_id>` 的 `job.state`，终态读 `job.viral.candidates`；展示平台、标题、作者、粉丝、互动、倍数和日期给用户，等用户选择后才调 `/api/viral/save`。
+保存默认关闭转写，可显式传 `options.transcribe=true`，并继续通过原有 job 查看入库进度。全已存在时 `job_id=null`，直接使用 `existing[].item_id`。
+
+门槛可在 preview 的 `thresholds.<平台>` 临时覆盖，持久配置用 `/api/config` 的 `viral` 对象（部分对象按默认值深合并；再次保存 viral 对象会替换前次自定义对象）。`GLEAN_VIRAL_ENABLED=0` 可关闭查询入口的后端能力。
+完整配置、返回字段、端点来源和待实测限制见 [SPEC.md](SPEC.md#427-低粉爆款候选筛选)。当前只做禁网 mock 验证；真实 TikHub 返回结构、权限和计费尚待用户授权实测。

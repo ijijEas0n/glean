@@ -17,3 +17,13 @@
 .creator-row{flex-wrap:wrap}.creator-works{flex:0 0 100%;min-width:0;border-top:1px solid #e4e4e1;padding-top:10px;margin-top:2px}.creator-works-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.creator-works-actions{display:flex;gap:7px}.creator-works-progress{padding:3px 0 8px}.creator-works-grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:7px}.creator-works-grid .preview-cover{aspect-ratio:1.18/1}@media(max-width:1050px){.creator-works-grid{grid-template-columns:repeat(5,minmax(0,1fr))}}@media(max-width:720px){.creator-works-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.creator-works-grid .preview-cover{aspect-ratio:1.05/1}.creator-works{padding-top:8px}}
 
 .preview-head-actions{display:flex;align-items:center;gap:9px}.creator-works-actions{flex-wrap:wrap}.creator-only-new{min-height:30px;gap:8px;font-size:12px;padding:0 3px}@media(max-width:720px){.preview-head-actions{gap:6px}.creator-works-actions{gap:5px}.creator-only-new{font-size:11px}}
+
+/* Low fan candidates: a small, scrollable table within the existing shell. */
+.viral-form { display: grid; gap: 12px; max-width: 780px; margin: 24px 0; }
+.viral-form fieldset { border: 0; padding: 0; display: flex; gap: 20px; flex-wrap: wrap; }
+.viral-form input:not([type=checkbox]) { width: 100%; padding: 12px; box-sizing: border-box; }
+.viral-table-wrap { max-width: 100%; overflow-x: auto; }
+.viral-table { width: 100%; border-collapse: collapse; min-width: 600px; text-align: left; }
+.viral-table td, .viral-table th { padding: 12px 10px; border-bottom: 1px solid #ddd; }
+.viral-table td:nth-child(2) { min-width: 180px; max-width: 400px; overflow-wrap: anywhere; }
+.viral-save { display: flex; gap: 20px; flex-wrap: wrap; align-items: center; margin: 24px 0; }

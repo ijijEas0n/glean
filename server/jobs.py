@@ -81,6 +81,7 @@ class Job:
         self.children_failed = 0
         # 抓取过程中不断更新的内容快照，供前端"随进度慢慢跳出来"
         self.partial: dict[str, Any] = {}
+        self.viral_result: dict[str, Any] = {}
         self._lock = threading.RLock()
         self._subscribers: list[queue.Queue] = []
 
@@ -191,6 +192,7 @@ class Job:
                 "children_ok": self.children_ok,
                 "children_failed": self.children_failed,
                 "partial": dict(self.partial),
+                **({"viral": dict(self.viral_result)} if self.mode == "viral_preview" else {}),
             }
 
 
@@ -299,6 +301,18 @@ class JobManager:
         job._broadcast("progress")
 
         try:
+            if job.mode == "viral_preview":
+                from .viral import preview
+
+                job.viral_result = preview(job.options, job.report)
+                job.warnings = job.viral_result["warnings"]
+                job.title = f"低粉爆款 · {len(job.viral_result['candidates'])} 条候选"
+                for row in job.stages:
+                    row["state"] = "done" if row["key"] in ("resolve", "fetch") else "skipped"
+                job.progress = {"stage": "fetch", "label": "候选筛选完成", "percent": 100,
+                                "detail": "勾选后才入库；候选筛选，非预测"}
+                job.state = "partial" if job.warnings else "done"
+                return
             if job.mode == "preview":
                 from .fetcher import run_preview
 

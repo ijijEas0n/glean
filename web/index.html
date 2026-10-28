@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#f7f7f5">
   <title>拾取 · 收集和阅读</title>
-  <link rel="stylesheet" href="/style.css?v=20261016b">
+  <link rel="stylesheet" href="/style.css?v=20261028-viral">
 </head>
 <body>
   <aside class="sidebar">
@@ -23,6 +23,7 @@
   <main class="main" id="main">
     <section class="page collect-page" id="pageCollect" hidden>
       <h1>收集</h1>
+      <p><a href="#/viral" class="quiet-link">低粉爆款 →</a></p>
       <form id="collectForm" class="collect-box">
         <textarea id="urlInput" rows="3" placeholder="粘贴链接" spellcheck="false"></textarea>
         <div class="collect-meta" id="collectMeta" hidden></div>
@@ -101,6 +102,27 @@
       </div>
     </section>
 
+    <section class="page" id="pageViral" hidden>
+      <h1>低粉爆款</h1>
+      <p class="muted">候选筛选，非预测。先看粉丝、互动和倍数，勾选后才入库。</p>
+      <form id="viralForm" class="viral-form">
+        <fieldset><legend>平台</legend><label><input id="viralDouyin" type="checkbox" checked> 抖音（互动=点赞）</label>
+          <label><input id="viralXhs" type="checkbox" checked> 小红书（互动=点赞+收藏）</label></fieldset>
+        <label for="viralKeywords">关键词（逗号分隔，最多 5 个；留空使用配置，默认 AI）</label>
+        <input id="viralKeywords" placeholder="例如：AI，科普" maxlength="404">
+        <p class="muted">默认：抖音 ≤5万粉、≥1万互动、≥3倍；小红书 ≤1万粉、≥1000互动、≥1倍。近14天，缺发布时间跳过。实际采用门槛见结果。</p>
+        <p class="muted">查询使用 TikHub 额度，不下载媒体。默认最多 24 次逻辑调用（重试另计），仅查每关键词首屏。</p>
+        <button class="button primary" id="viralSearch" type="submit">查候选（消耗额度）</button>
+        <a href="#/settings" class="quiet-link">配置 TikHub</a>
+      </form>
+      <p id="viralStatus" role="status" aria-live="polite"></p>
+      <p class="muted">窄屏可左右滑动表格，查看互动与倍数。</p>
+      <div class="viral-table-wrap"><table class="viral-table"><thead><tr><th>选择</th><th>标题 / 作者</th><th>粉丝</th><th>互动</th><th>倍数</th><th>发布</th></tr></thead><tbody id="viralRows"></tbody></table></div>
+      <div class="viral-save"><label><input type="checkbox" id="viralAll"> 全选未入库</label>
+        <label><input type="checkbox" id="viralTranscribe"> 入库时转写（消耗转写额度）</label>
+        <button class="button primary" id="viralSave" type="button" disabled>勾选后入库</button></div>
+    </section>
+
     <section class="page detail-page" id="pageDetail" hidden>
       <div class="detail-toolbar"><button class="quiet-link" id="detailBack">← 内容库</button><span></span><button class="button primary" id="copyOne">复制给 AI</button><div class="gear-wrap"><button class="button secondary" id="detailMore">⋯</button><div class="popover detail-menu" id="detailMenu" hidden><button data-action="text">复制正文</button><button data-action="transcript">复制文字稿</button><a id="originLink" target="_blank" rel="noreferrer">打开原链接</a><button data-action="folder">打开文件夹</button><button data-action="raw">接口原始记录</button></div></div></div>
       <article class="detail-content"><h1 id="detailTitle"></h1><div id="detailBy" class="detail-by"></div>
@@ -108,6 +130,6 @@
     </section>
   </main>
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-  <script src="/app.js?v=20261028"></script>
+  <script src="/app.js?v=20261028-viral"></script>
 </body>
 </html>

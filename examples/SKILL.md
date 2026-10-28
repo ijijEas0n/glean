@@ -2,6 +2,7 @@
 name: glean
 description: >-
   用户发来抖音、小红书等链接或 App 分享文案，要把视频、文案和字幕抓回来做引用或分析时使用。
+  也支持抖音/小红书低粉爆款候选筛选，等用户选中后入库。
   通过本机 glean 服务入库，返回 content.md 路径并基于原文分析。
 ---
 
@@ -91,3 +92,15 @@ curl -s --max-time 5 <GLEAN_HOST>/api/update
 请读这 N 条参考资料：
 <GLEAN_LIBRARY>/items/<id>/content.md  # 标题
 ```
+
+# 低粉爆款候选（非预测）
+
+用户要求找低粉爆款时，先说明候选查询使用 TikHub 额度（含另查作者粉丝），不保证爆款预测，得到用户查询授权后：
+
+1. `POST <GLEAN_HOST>/api/viral/preview`，正文如 `{"platforms":["douyin","xiaohongshu"],"keywords":["AI"],"limit":20}`。可在 `thresholds.<平台>` 覆盖门槛。缺 TikHub Key 时请用户自己去网页设置，不索要/打印密钥，不绕过服务维护cookie或加浏览器自动化。
+2. 返回202 job_id；每5秒 GET `<GLEAN_HOST>/api/jobs/<job_id>`，读 job.state。queued/running 继续等；failed 原样报告 job.error。done/partial 读 `job.viral.candidates` 与 warnings，这还没有入库，partial 的补粉失败/截断须说明。
+3. 向用户逐条编号展示「平台、标题、作者、粉丝、互动、倍数、发布距今天数、是否已入库」。用 key=`platform:作品id` 对应选择。不能只给倍数不展示粉丝。默认抖音≤50000粉、≥10000点赞、≥3倍；小红书≤10000粉、≥1000赞+藏、≥1倍；都限14天。倍数=互动/max(粉丝,1)，缺发布时间默认跳过，补粉失败/未知粉丝丢弃；展示数是近似计数时不暗示精确。
+4. **等用户明确勾选/选择编号后**，才 POST `<GLEAN_HOST>/api/viral/save`，如 `{"items":[{"platform":"douyin","id":"7401819680706448675"}],"options":{"transcribe":false}}`。也可传候选原 url（保留小红书链接参数）。禁止自动全量入库/下载；转写默认关闭，需要用户要字幕时才显式true。
+5. save 返回 batch job_id，沿用批次轮询与子条验收；existing 是跳过下载的本地条目，全部已存在时 job_id=null，直接用 existing[].item_id。不能把 batch 的空 item_id 当作品目录，从 job.partial.children[].item_id 取实际文件。读 `<GLEAN_LIBRARY>/items/<item_id>/content.md`，字幕仍须非空原文才算成功。
+
+这是候选筛选，不是预测；不做账号相对中位数R、评论抓取、官方话题榜代替作品筛选、浏览器核心或自行维护登录态。每关键词只查首屏，默认最多24次逻辑调用（重试另计）和200条扫描；结果受覆盖范围限制，不能称“全平台爆款榜”。

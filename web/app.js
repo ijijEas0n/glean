@@ -51,6 +51,7 @@ function closePopovers() {
 function titleOf(row) { return String(row.title || row.platform_label || row.platform || ''); }
 function platformLabel(key) { return ({ douyin: '抖音', xiaohongshu: '小红书' })[key] || key || ''; }
 function jobStatusLabel(job) {
+  if (job.mode === 'viral_preview') return '正在筛选低粉候选…';
   const stage = job.progress?.stage || '';
   return ({ resolve: '正在读取内容…', fetch: '正在读取内容…', media: '正在下载图片和视频…',
     transcribe: '正在把说的话变成文字…', store: '正在存到本地…' })[stage] || '准备保存…';
@@ -62,7 +63,7 @@ function linksFrom(text) {
 function showPage(page) {
   closePopovers();
   state.page = page;
-  for (const [name, id] of Object.entries({ collect: 'pageCollect', library: 'pageLibrary', creators: 'pageCreators', settings: 'pageSettings', detail: 'pageDetail' })) $(id).hidden = name !== page;
+  for (const [name, id] of Object.entries({ collect: 'pageCollect', library: 'pageLibrary', creators: 'pageCreators', settings: 'pageSettings', detail: 'pageDetail', viral: 'pageViral' })) $(id).hidden = name !== page;
   document.querySelectorAll('.nav-link').forEach(a => a.classList.remove('is-active'));
   const active = ({ collect: 'navCollect', library: 'navLibrary', creators: 'navCreators', settings: 'navSettings', detail: 'navLibrary' })[page];
   if (active) $(active).classList.add('is-active');
@@ -926,6 +927,7 @@ function setRoute() {
   const hash = location.hash || '#/';
   const item = hash.match(/^#\/item\/(.+)$/);
   if (item) { openDetail(decodeURIComponent(item[1])); return; }
+  if (hash.startsWith('#/viral')) { showPage('viral'); return; }
   if (hash.startsWith('#/settings')) { showPage('settings'); loadSettings(); return; }
   if (hash.startsWith('#/accounts') || hash.startsWith('#/creators')) { showPage('creators'); loadCreators(); return; }
   if (hash.startsWith('#/library') || hash.startsWith('#/favorites')) { showPage('library'); state.tab = hash.startsWith('#/favorites') ? 'favorites' : 'all'; if (state.tab !== 'all') { state.filters.author = ''; state.filters.authorId = ''; state.selected.clear(); } updateLibraryTabs(); loadLibrary(); return; }
@@ -936,6 +938,9 @@ function setRoute() {
 function updateLibraryTabs() { document.querySelectorAll('#libraryTabs button').forEach(b => b.classList.toggle('is-active', b.dataset.tab === state.tab)); }
 
 function bind() {
+  $('viralForm').addEventListener('submit', searchViral);
+  $('viralSave').addEventListener('click', saveViral);
+  $('viralAll').addEventListener('change', () => { viralRows.filter(x => !x.local).forEach(x => { if ($('viralAll').checked) viralSelected.add(x.key); else viralSelected.delete(x.key); }); renderViral(); });
   $('collectForm').addEventListener('submit', submitCollect);
   $('urlInput').addEventListener('input', () => { invalidatePreview(); state.resolveSeq = (state.resolveSeq || 0) + 1; state.preview = null; state.previewLoading = false; state.profileMode = false; state.collectResolving = false; state.collectResolving = linksFrom($('urlInput').value).length > 0; $('inlinePreview').hidden = true; $('collectLower').hidden = false; $('previewShortcuts').hidden = true; syncCount(); scheduleInspect(); });
   $('urlInput').addEventListener('paste', () => setTimeout(scheduleInspect, 0));
@@ -981,6 +986,76 @@ function bind() {
   });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closePopovers(); });
   window.addEventListener('hashchange', setRoute);
+}
+
+// 低粉候选保留在当前页面内存；预览不会写成虚拟库条目。
+let viralRows = [], viralSelected = new Set(), viralBusy = false;
+function renderViral() {
+  const body = $('viralRows'); body.replaceChildren();
+  for (const row of viralRows) {
+    const tr = node('tr');
+    const choose = node('td'); const check = node('input'); check.type = 'checkbox';
+    check.setAttribute('aria-label', `选择 ${row.title || row.id}`);
+    check.checked = viralSelected.has(row.key); check.disabled = row.local || viralBusy;
+    check.addEventListener('change', () => { if (check.checked) viralSelected.add(row.key); else viralSelected.delete(row.key); renderViral(); });
+    choose.append(check); tr.append(choose);
+    const info = node('td'); const link = node('a', '', row.title || '打开作品'); link.href = row.url; link.target = '_blank'; link.rel = 'noreferrer';
+    info.append(link, node('div', 'muted', `${platformLabel(row.platform)} · ${row.author || '作者未知'}${row.local ? ' · 已入库' : ''}`)); tr.append(info);
+    tr.append(node('td', '', row.fans), node('td', '', row.interactions), node('td', '', `${Number(row.multiplier).toFixed(2)}×`), node('td', '', row.age_days == null ? '日期未知' : `${Math.floor(row.age_days)}天前`));
+    body.append(tr);
+  }
+  const fresh = viralRows.filter(x => !x.local);
+  $('viralAll').checked = fresh.length > 0 && fresh.every(x => viralSelected.has(x.key));
+  $('viralAll').disabled = viralBusy || !fresh.length;
+  $('viralSave').disabled = viralBusy || !viralSelected.size;
+  $('viralSearch').disabled = viralBusy;
+  $('viralSave').textContent = viralSelected.size ? `入库 ${viralSelected.size} 条` : '勾选后入库';
+}
+async function searchViral(event) {
+  event.preventDefault(); if (viralBusy) return;
+  const platforms = []; if ($('viralDouyin').checked) platforms.push('douyin'); if ($('viralXhs').checked) platforms.push('xiaohongshu');
+  if (!platforms.length) { $('viralStatus').textContent = '请至少选择一个平台'; return; }
+  const keywords = $('viralKeywords').value.split(/[,，\n]/).map(x => x.trim()).filter(Boolean);
+  viralBusy = true; viralRows = []; viralSelected.clear(); renderViral();
+  $('viralStatus').textContent = '正在查询候选，可能需要几分钟…';
+  try {
+    const r = await api('/api/viral/preview', { method: 'POST', body: { platforms, ...(keywords.length ? { keywords } : {}), limit: 50 } });
+    watchJob(r.job_id, job => {
+      if (!['done', 'partial', 'failed'].includes(job.state)) return;
+      viralBusy = false;
+      if (job.state === 'failed') $('viralStatus').textContent = job.error || '查询失败';
+      else {
+        viralRows = job.viral?.candidates || [];
+        const rules = Object.entries(job.viral?.thresholds || {}).map(([p, t]) => `${platformLabel(p)} ≤${t.max_fans}粉 / ≥${t.min_interactions}互动 / ≥${t.min_multiplier}倍 / ${t.max_age_days}天（缺日期${t.allow_missing_date ? '放行' : '跳过'}）`).join('；');
+        $('viralStatus').textContent = `找到 ${viralRows.length} 条候选，扫描 ${job.viral?.scanned || 0} 条。${rules}。${(job.warnings || []).join('；')}`;
+      }
+      renderViral();
+    });
+  } catch (err) { viralBusy = false; renderViral(); $('viralStatus').textContent = err.message; }
+}
+async function saveViral() {
+  if (viralBusy) return;
+  const selected = viralRows.filter(x => viralSelected.has(x.key) && !x.local);
+  if (!selected.length) return;
+  viralBusy = true; renderViral();
+  try {
+    const r = await api('/api/viral/save', { method: 'POST', body: { items: selected.map(x => ({ platform: x.platform, id: x.id, url: x.url })), options: { transcribe: $('viralTranscribe').checked } } });
+    for (const existing of r.existing || []) { const row = viralRows.find(x => x.key === existing.id); if (row) { row.local = true; viralSelected.delete(row.key); } }
+    if (!r.job_id) { viralBusy = false; renderViral(); $('viralStatus').textContent = '所选作品已在本地，已跳过下载'; return; }
+    $('viralStatus').textContent = '正在保存所选作品…'; refreshJobs();
+    watchJob(r.job_id, job => {
+      $('viralStatus').textContent = job.progress?.detail || job.progress?.label || '正在保存…';
+      if (!['done', 'partial', 'failed'].includes(job.state)) return;
+      viralBusy = false;
+      for (const child of job.partial?.children || []) {
+        if (!child.local) continue;
+        const row = viralRows.find(x => x.url === child.url);
+        if (row) { row.local = true; viralSelected.delete(row.key); }
+      }
+      renderViral();
+      $('viralStatus').textContent = job.state === 'failed' ? job.error : `完成：${job.children_ok || 0} 条成功，${job.children_failed || 0} 条失败。${(job.warnings || []).join('；')}`;
+    });
+  } catch (err) { viralBusy = false; renderViral(); $('viralStatus').textContent = err.message; }
 }
 
 bind();
