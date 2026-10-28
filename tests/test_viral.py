@@ -89,6 +89,13 @@ class ViralTests(unittest.TestCase):
             'create_time': NOW.timestamp(),
         })
         self.assertEqual(dy['cover'], 'https://cdn.example/douyin-cover.jpg')
+        lowfan = viral.normalize('douyin', {
+            'item_id': '1234567890123456787', 'item_title': '低粉榜',
+            'nick_name': '作者', 'like_cnt': 10, 'fans_cnt': 100,
+            'item_cover_url': 'https://p3-sign.douyinpic.com/cover.jpeg',
+            'publish_time': NOW.timestamp(),
+        })
+        self.assertEqual(lowfan['cover'], 'https://p3-sign.douyinpic.com/cover.jpeg')
         red = viral.normalize('xiaohongshu', {
             'note_id': X1, 'title': '笔记',
             'user': {'nickname': '作者', 'userid': 'u1'},

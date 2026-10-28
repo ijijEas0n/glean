@@ -208,20 +208,28 @@ def rows_from(payload: dict) -> list[dict]:
 
 
 def cover_of(platform: str, obj: dict) -> str:
-    """从抖音/小红书搜索条目抠封面 URL；取不到留空，不编造。"""
+    """从抖音/小红书搜索条目抠封面 URL；取不到留空，不编造。
+
+    抖音低粉榜是扁平字段 `item_cover_url`，不是详情里的 video.cover。
+    """
     from server.adapters.base import first_url
     from server.adapters.douyin import _cover_url
     from server.adapters.xiaohongshu import _image_urls, _video_cover
 
     url = ""
-    if platform == "douyin":
+    for key in ("item_cover_url", "cover_url"):
+        value = obj.get(key)
+        if isinstance(value, str) and value.startswith("http"):
+            url = value
+            break
+    if not url and platform == "douyin":
         video = obj.get("video") if isinstance(obj.get("video"), dict) else {}
         if video:
             url = _cover_url(video)
-    else:
+    if not url and platform == "xiaohongshu":
         url = _video_cover(obj) or next(iter(_image_urls(obj)), "")
     if not url:
-        for key in ("cover", "cover_url", "thumbnail", "thumb_url", "image", "origin_cover"):
+        for key in ("cover", "thumbnail", "thumb_url", "image", "origin_cover"):
             value = obj.get(key)
             if isinstance(value, str) and value.startswith("http"):
                 url = value
