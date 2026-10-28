@@ -161,7 +161,11 @@ def _finalize(item: dict[str, Any], ctx: FetchContext) -> dict[str, Any]:
     transcript = item["transcript"]
     有文字 = _has_transcript(item)
     # 适配器可能返回空稿但忘了 warn；在所有落盘路径统一兜底。
-    if item.get("kind") == "video" and ctx.want_transcribe and not 有文字:
+    has_video_track = item.get("kind") == "video" or any(
+        isinstance(media, dict) and media.get("type") == "video"
+        for media in item.get("media") or []
+    )
+    if has_video_track and ctx.want_transcribe and not 有文字:
         note = str(transcript.get("note") or "").strip()
         if not note:
             note = ("转写引擎已关闭（off），本次请求未生成文字稿"
@@ -170,6 +174,11 @@ def _finalize(item: dict[str, Any], ctx: FetchContext) -> dict[str, Any]:
         transcript["note"] = note
         ctx.warn(note)
         item["warnings"] = list(ctx.warnings)
+    if not ctx.want_media:
+        for media in item.get("media") or []:
+            if (isinstance(media, dict) and media.get("type") == "video"
+                    and not media.get("path") and not media.get("error") and not media.get("removed")):
+                media["download_skipped"] = True
     if ctx.options.get("keep_video", True) is False and 有文字:
         for media in item.get("media") or []:
             if not isinstance(media, dict) or media.get("role") != "video":
@@ -197,11 +206,13 @@ def fetch_one_child(
     index: int = 0,
     total: int = 0,
 ) -> dict[str, Any] | None:
-    """抓主页清单里的单条作品，落成独立 item。失败返回 None（不中断整批）。"""
+    """抓主页清单里的单条作品，落成独立 item。失败原因写回子条（不中断整批）。"""
     from .resolver import resolve
 
     url = str(child.get("url") or "")
     if not url:
+        child["batch_state"] = "failed"
+        child["error"] = "子条没有可抓取的链接"
         return None
     try:
         resolved = resolve(url, expand=False)
@@ -212,7 +223,9 @@ def fetch_one_child(
             item = _finalize(item, ctx)
             store.save_item(item)
             return item
-    except (TikHubError, ValueError, RuntimeError, OSError):
+    except Exception as exc:  # noqa: BLE001 - 单个子条失败不应中断整个主页
+        child["batch_state"] = "failed"
+        child["error"] = f"{type(exc).__name__}: {exc}"[:200]
         return None
 
 
@@ -410,7 +423,11 @@ def run_batch(
         progress("正在写入本地库", 96, f"成功 {len(done_ids)} 条，失败 {failed} 条")
 
     if failed:
-        batch_item["warnings"].append(f"{failed} 条作品抓取失败（其余已入库）")
+        summary = f"{len(done_ids)} 条入库，{failed} 条失败"
+        reasons = [str(row.get("error") or "") for row in batch_item["children"] if row.get("error")]
+        if reasons:
+            summary += "：" + "；".join(reasons[:3])
+        batch_item["warnings"].append(summary)
     publish_batch()
     return {
         "item_id": profile_id or "",
@@ -471,14 +488,23 @@ def run_fetch(
                     saved = fetch_one_child(child, child_options, None, index=index, total=total)
                     if saved:
                         child["local"] = True
+                        child["batch_state"] = "partial" if saved.get("warnings") else "done"
                         item["warnings"].extend(_child_result(child, saved))
                         children_ok += 1
                     else:
+                        child["batch_state"] = "failed"
                         children_failed += 1
                 item["children"] = children
 
         if children_failed:
-            item["warnings"].append(f"{children_failed} 条作品内容未能抓取（其余已入库）")
+            failed_children = [child for child in item.get("children") or []
+                               if child.get("batch_state") == "failed"]
+            reasons = [f"{child.get('id') or child.get('url') or '子条'}：{child.get('error')}"
+                       for child in failed_children if child.get("error")]
+            summary = f"{children_ok} 条入库，{children_failed} 条失败"
+            if reasons:
+                summary += "：" + "；".join(reasons[:3])
+            item["warnings"].append(summary)
         ctx.publish()
         if progress:
             progress("正在写入本地库", 95)

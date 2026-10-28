@@ -56,7 +56,7 @@ function jobStatusLabel(job) {
     transcribe: '正在把说的话变成文字…', store: '正在存到本地…' })[stage] || '准备保存…';
 }
 function linksFrom(text) {
-  const found = String(text || '').match(/https?:\/\/[^\s\u4e00-\u9fff，。！？、；："']+/g) || [];
+  const found = String(text || '').match(/https?:\/\/[^\s\u4e00-\u9fff，。！？、；："']+/gi) || [];
   return [...new Set(found.map(x => x.replace(/[，。、）】"']+$/, '')))];
 }
 function showPage(page) {
@@ -69,15 +69,17 @@ function showPage(page) {
   if (page === 'collect') renderCollectOverview();
 }
 function currentOptions() {
-  const transcribe = $('onceTranscribe').checked;
+  const transcribe = $('onceTranscribe').checked && state.config.transcribe_engine !== 'off';
   return { download_media: true, transcribe, keep_video: $('onceKeep').checked };
 }
 function syncCount() {
   const urls = linksFrom($('urlInput').value);
   if (state.preview) {
-    const selected = [...(state.preview.children_preview || [])].filter(x => state.previewSelected.has(x.id) && !x.local).length;
-    $('submitButton').textContent = selected ? `保存 ${selected} 条` : '保存';
-    $('submitButton').disabled = !state.configLoaded || state.previewLoading || selected === 0;
+    const selectedItems = [...(state.preview.children_preview || [])].filter(x => state.previewSelected.has(x.id) && !x.local);
+    const selected = selectedItems.length;
+    const saving = selectedItems.some(x => x.saving);
+    $('submitButton').textContent = saving ? '正在保存…' : selected ? `保存 ${selected} 条` : '保存';
+    $('submitButton').disabled = !state.configLoaded || state.previewLoading || selected === 0 || saving;
     $('collectCount').textContent = '';
     const saved = (state.preview.children_preview || []).filter(x => x.local).length;
     const previewMeta = $('collectMeta'); previewMeta.replaceChildren();
@@ -274,7 +276,7 @@ function renderPreview() {
     const check = node('span', 'card-check', state.previewSelected.has(item.id) ? '✓' : ''); card.append(check);
     if (item.local || item.saving) card.append(node('span', 'saved-mark', item.saving ? '已提交' : '已存'));
     card.append(node('span', 'preview-title', item.title || ''));
-    card.addEventListener('click', () => { if (item.local) return; if (state.previewSelected.has(item.id)) state.previewSelected.delete(item.id); else state.previewSelected.add(item.id); renderPreview(); syncCount(); });
+    card.addEventListener('click', () => { if (item.local || item.saving) return; if (state.previewSelected.has(item.id)) state.previewSelected.delete(item.id); else state.previewSelected.add(item.id); renderPreview(); syncCount(); });
     grid.append(card);
   }
   const hasMore = state.previewLimit < 200 && (total ? all.length < total : all.length >= state.previewLimit);
@@ -286,13 +288,44 @@ async function saveSelectedPreview() {
   const all = state.preview?.children_preview || [];
   const selected = all.filter(x => state.previewSelected.has(x.id) && !x.local);
   if (!state.configLoaded || !selected.length) return;
+  if (selected.some(x => x.saving)) return;
   if (!selected.length) { toast('先选要保存的作品', true); return; }
   const opts = currentOptions();
+  const selectedIds = new Set(selected.map(x => x.id));
+  selected.forEach(x => { x.saving = true; });
+  syncCount(); renderPreview();
   try {
     const items = selected.map(c => ({ ...c, transcribe: c.kind === 'video' && opts.transcribe }));
     const r = await api('/api/jobs', { method: 'POST', body: { items, profile_id: state.preview?.id || '', url: state.previewUrl, options: opts } });
-    monitorJob(r.job_id, 'batch'); toast(`已提交 ${selected.length} 条`); refreshJobs();
-  } catch (err) { toast(err.message, true); }
+    toast(`已提交 ${selected.length} 条`); refreshJobs();
+    watchJob(r.job_id, job => {
+      const children = job.partial?.children || job.partial?.children_preview || [];
+      const terminal = ['done', 'partial', 'failed'].includes(job.state);
+      if (terminal) {
+        for (const previewItem of state.preview?.children_preview || []) {
+          if (!selectedIds.has(previewItem.id)) continue;
+          const saved = children.find(child => child.id === previewItem.id || child.url === previewItem.url);
+          previewItem.saving = false;
+          if (saved?.local || saved?.item_id) {
+            previewItem.local = true;
+            previewItem.item_id = saved.item_id || saved.id;
+            state.previewSelected.delete(previewItem.id);
+          }
+        }
+        syncCount(); renderPreview();
+        if (job.state === 'partial') {
+          const count = Number(job.children_ok || 0), failed = Number(job.children_failed || 0);
+          toast(count === 0 && failed > 0
+            ? batchFailureMessage(job)
+            : `已入库，但有提醒：${(job.warnings || []).join('；') || '请查看详情'}`, true);
+        } else if (job.state === 'failed') toast(job.error || '保存失败', true);
+        else toast('所选作品已入库');
+      }
+    });
+  } catch (err) {
+    selected.forEach(x => { x.saving = false; });
+    syncCount(); renderPreview(); toast(err.message, true);
+  }
 }
 
 function fetchedAgo(iso) {
@@ -476,29 +509,35 @@ async function loadCreatorWorks(account, panel) {
 
 function watchJob(id, callback) {
   let stopped = false, failures = 0, timer = null;
-  const startedAt = Date.now();
   const stop = () => { stopped = true; if (timer) clearTimeout(timer); };
   const fail = (message) => { stop(); callback({ state: 'failed', error: message, connectionError: true }); };
   const poll = async () => {
     if (stopped) return;
-    if (Date.now() - startedAt > 10 * 60 * 1000) { fail('连接断了，稍后再试'); return; }
     try {
       const r = await api(`/api/jobs/${encodeURIComponent(id)}`); const job = r.job;
       failures = 0;
       callback(job);
       if (['done', 'partial', 'failed'].includes(job.state)) { stop(); refreshJobs(); refreshRecent(); return; }
-      if (Date.now() - startedAt > 10 * 60 * 1000) { fail('连接断了，稍后再试'); return; }
     } catch (e) {
       if (e.status === 404) { fail('连接断了，稍后再试'); return; }
       failures += 1;
-      if (failures >= 5 || Date.now() - startedAt > 10 * 60 * 1000) { fail('连接断了，稍后再试'); return; }
+      if (failures >= 5) { fail('连接断了，稍后再试'); return; }
     }
     if (!stopped) timer = setTimeout(poll, 1300);
   };
   poll(); return stop;
 }
+function batchFailureMessage(job) {
+  const count = Number(job.children_failed || 0);
+  const warnings = (job.warnings || []).join('；');
+  const prefix = `0 条入库，${count} 条失败`;
+  if (warnings.startsWith(prefix)) return warnings;
+  return `${prefix}${warnings ? `：${warnings}` : '，请查看任务详情'}`;
+}
 function monitorJob(id, kind) { return watchJob(id, job => {
-  if (job.state === 'partial') toast(`已入库，但有提醒：${(job.warnings || []).join('；') || '请查看详情'}`, true);
+  if (job.state === 'partial' && Number(job.children_ok) === 0 && Number(job.children_failed) > 0)
+    toast(batchFailureMessage(job), true);
+  else if (job.state === 'partial') toast(`已入库，但有提醒：${(job.warnings || []).join('；') || '请查看详情'}`, true);
   else if (job.state === 'done') toast(kind === 'batch' ? '所选作品已入库' : '已入库');
   else if (job.state === 'failed') toast(job.error || '保存失败', true);
 }); }
@@ -709,7 +748,12 @@ function renderDetail(item) {
   else $('detailTranscript').append(node('div', 'empty-inline', transcript.note ? `没有文字稿：${transcript.note}` : '没有文字稿'));
   if (item.kind === 'video' && !state.detailVideo) {
     if (!shownCover && item.cover) { const cover = node('img', 'detail-image detail-cover'); cover.src = coverUrl(item.cover, item.url); cover.alt = ''; $('detailMedia').append(cover); }
-    $('detailMedia').append(node('div', 'muted', '视频已删除'));
+    const videoMedia = media.find(m => m.type === 'video') || {};
+    const message = videoMedia.removed ? '本地视频文件已删除'
+      : videoMedia.error ? `视频未下载：${videoMedia.error}`
+      : videoMedia.download_skipped ? '本次未下载视频'
+      : (item.warnings || []).find(w => /视频.*(?:下载失败|未下载)/.test(w)) || '视频未下载';
+    $('detailMedia').append(node('div', 'muted', message));
   }
   const problems = [...new Set([...(item.warnings || []), transcript.note].filter(Boolean))];
   if (item.kind === 'video' && !segments.some(segment => String(segment.text || segment.content || '').trim()) && !String(transcript.text || '').trim()) problems.push('没有文字稿');
@@ -824,13 +868,30 @@ function renderSettings() {
   $('settingFallback').checked = c.transcribe_fallback_local !== false; $('proxyInput').value = c.proxy || '';
   for (const [id, key] of [['flagTikhub','tikhub_api_key_set'], ['flagVolc','volcengine_api_key_set'], ['flagAliyun','aliyun_api_key_set']]) $(id).textContent = c[key] ? '已配' : '未填';
   if (!state.onceOptionsDirty) { $('onceTranscribe').checked = c.transcribe_engine !== 'off'; $('onceKeep').checked = c.keep_video !== false; }
+  syncTranscribeControl();
   const problems = [];
   const s = state.settingsStatus || {};
   if (!s.key_present || s.tikhub_ok === false) problems.push({ text: s.tikhub_note || 'TikHub 账号或余额有问题', action: '' });
   if (s.network?.ok === false || s.proxy?.ok === false) problems.push({ text: s.network?.message || '网络连接有问题', action: '重新检查' });
   const engine = state.config.transcribe_engine || 'volcengine';
-  if (engine === 'volcengine' && s.volcengine_ok === false) problems.push({ text: s.volcengine_note || '火山转写暂时不可用', action: '' });
-  if (engine === 'aliyun' && s.aliyun_ok === false) problems.push({ text: s.aliyun_note || '阿里云转写暂时不可用', action: '' });
+  if (engine !== 'off') {
+    const engineKey = engine === 'aliyun' ? 'aliyun' : engine === 'local' ? 'local' : 'volcengine';
+    if (engineKey === 'local' && !s.local_transcribe) {
+      problems.push({ text: '转写尚未配置：本机 faster-whisper 不可用', action: '' });
+    } else if (engineKey === 'volcengine' && !c.volcengine_api_key_set && !s.volcengine_key) {
+      problems.push({ text: '转写尚未配置：火山引擎 API Key 未填写', action: '' });
+    } else if (engineKey === 'aliyun' && !c.aliyun_api_key_set && !s.aliyun_key) {
+      problems.push({ text: '转写尚未配置：阿里云 API Key 未填写', action: '' });
+    } else if (engineKey === 'volcengine' && s.volcengine_ok === false) {
+      problems.push({ text: s.volcengine_note || '火山转写暂时不可用', action: '' });
+    } else if (engineKey === 'aliyun' && s.aliyun_ok === false) {
+      problems.push({ text: s.aliyun_note || '阿里云转写暂时不可用', action: '' });
+    } else if (engineKey === 'volcengine' && s.volcengine_ok == null) {
+      problems.push({ text: '转写尚未就绪：火山引擎状态尚未检测', action: '' });
+    } else if (engineKey === 'aliyun' && s.aliyun_ok == null) {
+      problems.push({ text: '转写尚未就绪：阿里云状态尚未检测', action: '' });
+    }
+  }
   if (!state.favoriteStatus?.configured) problems.push({ text: '收藏夹同步没配置', action: '' });
   const favMessage = String(state.favoriteStatus?.message || '');
   if (state.favoriteStatus?.login_expired || /登录.*过期|登录失效/.test(favMessage)) problems.push({ text: '收藏夹登录过期', action: '' });
@@ -846,9 +907,19 @@ async function loadCollectDefaults() {
   try {
     const r = await api('/api/config'); state.config = r.config || {};
     if (!state.onceOptionsDirty) { $('onceTranscribe').checked = state.config.transcribe_engine !== 'off'; $('onceKeep').checked = state.config.keep_video !== false; }
+    syncTranscribeControl();
     state.configLoaded = true;
   } catch (err) { toast(`设置没读出来：${err.message}`, true); }
   syncCount();
+}
+function syncTranscribeControl() {
+  const disabled = state.config.transcribe_engine === 'off';
+  $('onceTranscribe').disabled = disabled;
+  const hint = $('onceTranscribeHint');
+  if (hint) {
+    hint.hidden = !disabled;
+    hint.textContent = disabled ? '请先在设置中开启并配置转写服务。' : '';
+  }
 }
 
 function setRoute() {
