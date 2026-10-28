@@ -350,6 +350,8 @@ Base: `http://127.0.0.1:8899`
 ```
 
 - `state=partial`：主体拿到了但有降级（如转写失败、部分图片下载失败），前端照常展示并显示警告。
+- 视频请求 `transcribe: true` 却没有有效文字时，必须保留 `transcript.note` 并写入 `warnings`，不能无警告 `done`。包括引擎 `off`、缺 Key、下载/提取音频失败、返回空文字；没有说话仍为 `partial`。显式 `transcribe: false` 不属于转写失败。
+- 批量和展开主页把子条警告（带作品 ID）汇总到任务 `warnings`，子条保留 `item_id`、`has_transcript`、`warnings`。`children_ok` 计入库数，不代表字幕完整数。字幕验收要求每条 `content.md` 有非空「## 字幕原文」，不能只验主页文件。
 - SSE 事件：`event: progress` + 上面的任务 JSON；结束时 `event: done` / `event: error`。
 
 ### 4.2.4 我的账号（看板）

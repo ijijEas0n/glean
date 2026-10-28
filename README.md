@@ -80,6 +80,10 @@ python3 -m venv ~/.glean/faster-whisper && ~/.glean/faster-whisper/bin/pip insta
 - `partial`：结束，但带有 warnings。文件可能已经入库。
 - `failed`：没有完成。
 
+请求转写的视频若没有有效文字，任务会带原因并以 `partial` 结束（包括引擎 `off`、缺 Key、下载或转写失败）。主动选择 `transcribe: false` 不作字幕验收。网页提醒和详情会展示原因。
+
+主页批量把子条警告汇总到任务 `warnings`，子条带 `item_id`、`has_transcript`；入库成功数不代表字幕成功数。验字幕需按子条 `item_id` 逐条检查 `content.md`，主页清单本身没有视频字幕。
+
 **纯 BGM、没有人声**时，没有字幕正文、任务停在 `partial`，是正常结果，不要当成故障重抓。它也不能用来声称「转写验收通过」。
 
 有人声样例若 `content.md` 没有字幕正文，验收不通过，即使任务不是 `failed`。更细的对照：`item.json` 里 `transcript.text` 非空、`segments` 非空、`transcript.source` 不是 `none`。

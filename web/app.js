@@ -497,7 +497,11 @@ function watchJob(id, callback) {
   };
   poll(); return stop;
 }
-function monitorJob(id, kind) { return watchJob(id, job => { if (['done', 'partial'].includes(job.state)) toast(kind === 'batch' ? '已完成' : '保存完成'); else if (job.state === 'failed') toast(job.error || '保存失败', true); }); }
+function monitorJob(id, kind) { return watchJob(id, job => {
+  if (job.state === 'partial') toast(`已入库，但有提醒：${(job.warnings || []).join('；') || '请查看详情'}`, true);
+  else if (job.state === 'done') toast(kind === 'batch' ? '所选作品已入库' : '已入库');
+  else if (job.state === 'failed') toast(job.error || '保存失败', true);
+}); }
 async function refreshJobs() {
   try { const r = await api('/api/jobs'); state.jobs = r.jobs || []; renderCollectOverview(); } catch { /* local service may restart */ }
 }
@@ -689,7 +693,7 @@ function renderDetail(item) {
     if (m.type === 'video' && m.path && !m.removed) { const v = node('video', 'detail-video'); v.controls = true; v.src = src; state.detailVideo = v; $('detailMedia').append(v); }
     else if (m.type === 'image' && !(hasPlayableVideo && m.role === 'cover')) { const img = node('img', 'detail-image'); img.src = src; img.alt = ''; $('detailMedia').append(img); shownCover ||= m.role === 'cover'; }
   });
-  const transcript = item.transcript || {}; const segments = transcript.segments || [];
+  const transcript = item.transcript || {}; const segments = (transcript.segments || []).filter(segment => String(segment.text || segment.content || '').trim());
   if (segments.length) {
     const list = node('div', 'transcript-lines');
     for (const segment of segments) {
@@ -702,12 +706,12 @@ function renderDetail(item) {
     }
     $('detailTranscript').append(list);
   } else if (String(transcript.text || '').trim()) $('detailTranscript').append(node('div', 'prose', transcript.text));
-  else $('detailTranscript').append(node('div', 'empty-inline', '没有文字稿'));
+  else $('detailTranscript').append(node('div', 'empty-inline', transcript.note ? `没有文字稿：${transcript.note}` : '没有文字稿'));
   if (item.kind === 'video' && !state.detailVideo) {
     if (!shownCover && item.cover) { const cover = node('img', 'detail-image detail-cover'); cover.src = coverUrl(item.cover, item.url); cover.alt = ''; $('detailMedia').append(cover); }
     $('detailMedia').append(node('div', 'muted', '视频已删除'));
   }
-  const problems = [];
+  const problems = [...new Set([...(item.warnings || []), transcript.note].filter(Boolean))];
   if (item.kind === 'video' && !segments.some(segment => String(segment.text || segment.content || '').trim()) && !String(transcript.text || '').trim()) problems.push('没有文字稿');
   $('detailCompleteness').hidden = !problems.length; $('detailCompleteness').textContent = problems.join(' · ');
   $('detailText').hidden = false; $('detailTranscript').hidden = false; $('detailMedia').hidden = false;
