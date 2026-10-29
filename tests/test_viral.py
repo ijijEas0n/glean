@@ -122,11 +122,11 @@ class ViralTests(unittest.TestCase):
             for value in values:
                 with self.subTest(name=name, value=value), self.assertRaises(ValueError):
                     self.settings(**{name: value})
-        for hours in (24, 72, 168, 336, 720):
+        for hours in (24, 72, 168):
             self.assertEqual(self.settings(source_window_hours=hours)['source_window_hours'], hours)
-        with patch.object(viral, 'load_config', return_value={'viral': {'max_pages': 3, 'source_window_hours': 720}}):
+        with patch.object(viral, 'load_config', return_value={'viral': {'max_pages': 3, 'source_window_hours': 72}}):
             self.assertEqual(viral.prepare({})['max_pages'], 3)
-            self.assertEqual(viral.prepare({})['source_window_hours'], 720)
+            self.assertEqual(viral.prepare({})['source_window_hours'], 72)
             self.assertEqual(viral.prepare({'source_window_hours': 24})['source_window_hours'], 24)
         self.get.assert_not_called(); self.post.assert_not_called()
 
@@ -150,12 +150,12 @@ class ViralTests(unittest.TestCase):
                 return {'data': {'items': [xhs()]}}
             return {'data': {'fans': 1000}}
         self.post.side_effect = post; self.get.side_effect = get
-        result = viral.preview(self.settings(keywords=['A', 'B'], max_pages=3, source_window_hours=720))
+        result = viral.preview(self.settings(keywords=['A', 'B'], max_pages=3, source_window_hours=72))
         expected = [(p, k, page) for page in (1, 2, 3) for p in viral.PLATFORMS for k in ('A', 'B')]
         self.assertEqual([(p, q['keyword'], q['page']) for p, q in order], expected)
         for p, query in order:
             if p == 'douyin':
-                self.assertEqual(query['date_window'], 720)
+                self.assertEqual(query['date_window'], 72)
                 self.assertEqual(query['page_size'], 50)
             else:
                 self.assertEqual(query['sort_type'], 'popularity_descending')
@@ -164,7 +164,7 @@ class ViralTests(unittest.TestCase):
         self.assertEqual(result['calls'], 13)
         self.assertEqual(result['coverage']['source_calls'], {'douyin': 6, 'xiaohongshu': 6})
         self.assertEqual(result['coverage']['pages_by_keyword']['douyin'], {'A': 3, 'B': 3})
-        self.assertEqual(result['coverage']['source_window_hours'], {'douyin': 720, 'xiaohongshu': None})
+        self.assertEqual(result['coverage']['source_window_hours'], {'douyin': 72, 'xiaohongshu': None})
         self.assertFalse(result['coverage']['incomplete'])
 
     def test_budget_prioritizes_keywords_before_deeper_pages_and_profiles(self):

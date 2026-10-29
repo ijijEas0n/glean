@@ -144,7 +144,7 @@ def prepare(payload: dict) -> dict:
     cap = result["max_calls"]
     if isinstance(cap, bool) or not isinstance(cap, int) or not 1 <= cap <= 50:
         raise ValueError("viral.max_calls 必须是 1–50 的整数")
-    for name, low, high in (("source_window_hours", 24, 720), ("max_pages", 1, 3)):
+    for name, low, high in (("source_window_hours", 24, 168), ("max_pages", 1, 3)):
         value = payload.get(name, result[name])
         if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
             raise ValueError(f"{name} 必须是 {low}–{high} 的整数")

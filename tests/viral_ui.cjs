@@ -67,19 +67,19 @@ console.log('slider interactions: OK; network requests: 0');
     const submitted = [];
     api = async (path, options) => { submitted.push({path, body:options.body}); return {job_id:'mock'}; };
     watchJob = (id, callback) => callback({state:'done', viral:{pool:[], scanned:12, calls:9,
-      coverage:{keywords:{douyin:['AI','科普']}, source_window_hours:{douyin:720},
+      coverage:{keywords:{douyin:['AI','科普']}, source_window_hours:{douyin:72},
         max_pages:3, pages_by_keyword:{douyin:{AI:3, '科普':2}}, source_calls:{douyin:5}}}});
     $('viralDouyin').checked = true;
     $('viralXhs').checked = true;
     $('viralKeywords').value = ' AI，科普\\nAI ';
-    $('viralSourceWindow').value = '720';
+    $('viralSourceWindow').value = '72';
     $('viralMaxPages').value = '3';
     await searchViral({preventDefault(){}});
     if (submitted.length !== 1) throw Error('应只提交一次查询');
     const body = submitted[0].body;
-    if (submitted[0].path !== '/api/viral/preview' || body.source_window_hours !== 720 || body.max_pages !== 3) throw Error('源参数');
+    if (submitted[0].path !== '/api/viral/preview' || body.source_window_hours !== 72 || body.max_pages !== 3) throw Error('源参数');
     if (JSON.stringify(body.keywords) !== JSON.stringify(['AI','科普'])) throw Error('批量拆词去重');
-    for (const text of ['AI（3页）','科普（2页）','720 小时','扫描 12 条','TikHub 调用 9 次']) {
+    for (const text of ['AI（3页）','科普（2页）','72 小时','扫描 12 条','TikHub 调用 9 次']) {
       if (!$('viralStatus').textContent.includes(text)) throw Error('摘要缺少：'+text);
     }
     $('viralKeywords').value = Array.from({length:20}, (_,i) => '词'+i).join('，');
