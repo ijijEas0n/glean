@@ -182,12 +182,12 @@ def _explain_http(code: int, body: str) -> str:
     """把 TikHub 的 HTTP 错误翻成人话 + 能直接照做的下一步。"""
     low = body.lower()
     if code == 402 or "insufficient balance" in low:
-        return ("TikHub 账号余额不足（接口返回 402）。"
+        return ("TikHub 余额不足，请充值（接口返回 402）。"
                 "到 tikhub.io 充值后即可继续。"
                 "注意：部分接口只扣付费余额，免费额度不能抵扣。")
     if code == 401 or code == 403 and "1010" not in low:
         return ("TikHub 拒绝了这次请求（鉴权失败）。"
-                "检查 Key 是否有效：echo $TIKHUB_API_KEY")
+                "请在设置里检查 Key 是否有效，勿向聊天发送 Key")
     if code == 429:
         return "TikHub 限流了（请求太频繁），等一会儿再试。"
     if code >= 500:
@@ -287,6 +287,9 @@ def request(
         if code == 200:
             _remember_account(True)
             return payload
+        if code == 402 or "insufficient balance" in _compact_error(payload).lower():
+            _remember_account(False, "balance", "TikHub 余额不足")
+            raise TikHubError("TikHub 余额不足，请充值", status=402)
         business = str(code or "")
         if business.isdigit() and int(business) in RETRYABLE_STATUS and attempt < MAX_ATTEMPTS:
             last_error = f"业务码 {business}"

@@ -24,12 +24,14 @@ DEFAULTS = {
     "enabled": True,
     "max_calls": 24,
     "source_window_hours": 168,
+    "publish_time": 7,
+    "douyin_sources": ["search", "lowfan"],
     "max_pages": 2,
     "douyin": {
         "max_fans": 50000, "min_interactions": 1000, "min_multiplier": 0.3,
         "max_age_days": 14, "allow_missing_date": False, "keywords": ["AI"],
-        "source": "lowfan",
-        "path": "/api/v1/douyin/billboard/fetch_hot_total_low_fan_list",
+        "source": "search",
+        "path": "/api/v1/douyin/search/fetch_video_search_v2",
         "user_path": "/api/v1/douyin/app/v3/handler_user_profile",
     },
     "xiaohongshu": {
@@ -149,6 +151,18 @@ def prepare(payload: dict) -> dict:
         if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
             raise ValueError(f"{name} 必须是 {low}–{high} 的整数")
         result[name] = value
+    days = payload.get("publish_time", result["publish_time"])
+    if isinstance(days, bool) or not isinstance(days, int) or days not in (0, 7, 180):
+        raise ValueError("publish_time 必须是 7 / 180 / 0（不限）")
+    result["publish_time"] = days
+    sources = payload.get("douyin_sources", result["douyin_sources"])
+    # 兼容旧配置显式选择单一来源；新请求可用来源勾选覆盖。
+    if ("douyin_sources" not in payload and "douyin_sources" not in config
+            and isinstance(config.get("douyin"), dict) and "source" in config["douyin"]):
+        sources = [config["douyin"]["source"]]
+    if not isinstance(sources, list) or not sources or any(x not in ("search", "lowfan") for x in sources):
+        raise ValueError("douyin_sources 请选择 search / lowfan")
+    result["douyin_sources"] = [x for x in ("search", "lowfan") if x in sources]
     tier = payload.get("tier", result["tier"])
     if isinstance(tier, bool) or not isinstance(tier, int) or not 0 <= tier <= 4:
         raise ValueError("tier 必须是 0–4 的整数")
@@ -194,12 +208,51 @@ def pick(obj: dict, *keys: str) -> Any:
     return next((obj[k] for k in keys if obj.get(k) is not None), None)
 
 
+def is_balance_error(value) -> bool:
+    return getattr(value, "status", None) == 402 or any(
+        text in str(value).lower() for text in ("402", "insufficient balance", "余额不足"))
+
+
+def check_balance(payload):
+    data = payload
+    for _ in range(5):
+        if not isinstance(data, dict):
+            break
+        messages = " ".join(str(data.get(k, "")) for k in ("message", "message_zh", "error"))
+        if str(data.get("code")) == "402" or any(x in messages.lower() for x in ("insufficient balance", "余额不足")):
+            raise tikhub.TikHubError("TikHub 余额不足，请充值", status=402)
+        data = data.get("detail") if isinstance(data.get("detail"), dict) else data.get("data")
+
+
+def pagination(payload: dict, platform: str) -> tuple[bool | None, dict]:
+    """只读取已知响应包装，含实测 business_config.next_page。"""
+    data = tikhub.data_of(payload)
+    layers = []
+    for _ in range(5):
+        if not isinstance(data, dict):
+            break
+        layers.append(data)
+        if isinstance(data.get("business_config"), dict):
+            layers.append(data["business_config"])
+        data = data.get("data")
+    more, params = None, {}
+    keys = ("cursor", "search_id", "backtrace") if platform == "douyin" else ("search_id", "search_session_id")
+    for layer in layers:
+        if "has_more" in layer:
+            more = str(layer["has_more"]).lower() not in ("0", "false", "none")
+        for container in (layer, layer.get("next_page", {}), layer.get("log_pb", {})):
+            if isinstance(container, dict):
+                params.update({k: container[k] for k in keys if container.get(k) is not None})
+    return more, params
+
+
 def rows_from(payload: dict) -> list[dict]:
     """只遍历已知列表包装，不递归搜任意 id，以免把作者/广告算成作品。
 
-    端点有公开文档；具体响应包装与字段兼容仍是假设/待实测。
+    搜索包装按 2026-10-29 真实响应 fixture 回归。
     未识别的结构显式报错，不能伪装成“没有候选”。
     """
+    check_balance(payload)
     data = tikhub.data_of(payload)
     for _ in range(5):
         if isinstance(data, list):
@@ -249,6 +302,10 @@ def cover_of(platform: str, obj: dict) -> str:
 
 
 def normalize(platform: str, obj: dict) -> dict | None:
+    if platform == "douyin" and isinstance(obj.get("data"), dict):
+        obj = obj["data"]
+        if not isinstance(obj.get("aweme_info"), dict):
+            return None
     obj = obj.get("aweme_info") or obj.get("note_card") or obj.get("note") or obj
     if not isinstance(obj, dict):
         return None
@@ -271,9 +328,9 @@ def normalize(platform: str, obj: dict) -> dict | None:
     return {"platform": platform, "id": biz, "key": f"{platform}:{biz}",
             "url": url,
             "cover": cover_of(platform, obj),
-            "title": str(pick(obj, "item_title", "title", "display_title", "desc") or "")[:500],
+            "title": str(next((obj[k] for k in ("item_title", "title", "display_title", "desc") if obj.get(k)), ""))[:500],
             "author": str(pick(author, "nickname", "nick_name", "name") or obj.get("nick_name") or ""),
-            "author_id": str(pick(author, "sec_uid", "userid", "user_id", "uid", "id") or ""),
+            "author_id": str(pick(author, "sec_uid", "userid", "user_id", "uid", "id") or obj.get("sec_uid") or ""),
             "fans": count(pick(obj, "fans_cnt", "fans")) if platform == "douyin" and any(k in obj for k in ("fans_cnt", "fans"))
                     else count(pick(author, "follower_count", "fans", "fans_count", "followers")),
             "likes": count(pick(stats, "digg_count", "like_cnt", "liked_count", "likes")),
@@ -307,7 +364,7 @@ def profile_fans(payload: dict) -> int | None:
 def preview(settings: dict, progress=None) -> dict:
     """按页轮询各平台关键词，最多扫描 300 条；补粉缓存仅本次任务有效。"""
     calls, scanned = 0, 0
-    warnings, pool, seen, fans_cache, fans_notes = [], [], set(), {}, {}
+    warnings, pool, fans_cache, fans_notes = [], [], {}, {}
     now = datetime.now(timezone.utc)
     incomplete = False
     authors_checked = 0
@@ -318,59 +375,101 @@ def preview(settings: dict, progress=None) -> dict:
             incomplete = True
             raise ValueError("已达本次 TikHub 调用上限，结果未完整核对")
         calls += 1
-        return tikhub.post(path, params) if post else tikhub.get(path, params)
+        try:
+            response = tikhub.post(path, params) if post else tikhub.get(path, params)
+        except tikhub.TikHubError as exc:
+            if is_balance_error(exc):
+                raise tikhub.TikHubError("TikHub 余额不足，请充值", status=402) from exc
+            raise
+        check_balance(response)
+        return response
 
     source_calls = {p: 0 for p in settings["platforms"]}
     pages_by_keyword = {p: {k: 0 for k in settings[p]["keywords"]} for p in settings["platforms"]}
-    exhausted = set()
-    # 页码在最外层：先覆盖所有关键词首屏，有余量再深翻，最后补粉。
+    pages_by_source = {}
+    streams = [(p, source, k) for p in settings["platforms"]
+               for source in (settings["douyin_sources"] if p == "douyin" else ["search"])
+               for k in settings[p]["keywords"]]
+    continuation, exhausted, originals = {}, set(), {}
+    # 所有来源/关键词先首屏，再深翻；低粉榜只补一页，最后补粉。
     for page in range(1, settings["max_pages"] + 1):
-        for platform in settings["platforms"]:
+        for platform, source, keyword in streams:
+            stream = (platform, source, keyword)
+            if stream in exhausted or (source == "lowfan" and page > 1):
+                continue
+            if calls >= settings["max_calls"] or scanned >= 300:
+                incomplete = True
+                warnings.append("已达调用或扫描上限，结果未完整核对")
+                continue
             rule = settings[platform]
-            for keyword in rule["keywords"]:
-                if (platform, keyword) in exhausted:
-                    continue
-                if platform == "douyin" and rule["source"] == "search" and page > 1:
-                    incomplete = True
-                    warnings.append("抖音自定义 search 源仅查首屏，深翻仅支持 lowfan 源")
-                    continue
-                if calls >= settings["max_calls"] or scanned >= 300:
-                    incomplete = True
-                    warnings.append("已达调用或扫描上限，结果未完整核对")
-                    continue
-                if progress:
-                    progress("正在查询本批参考", min(90, 10 + calls), f"{platform} · {keyword} · 第{page}页")
-                if platform == "douyin":
-                    query = ({"page": page, "page_size": 50, "date_window": settings["source_window_hours"], "keyword": keyword}
-                             if rule["source"] == "lowfan" else {"keyword": keyword, "cursor": 0})
+            if progress:
+                progress("正在查询本批参考", min(90, 10 + calls), f"{platform} · {source} · {keyword} · 第{page}页")
+            if platform == "douyin" and source == "lowfan":
+                path = "/api/v1/douyin/billboard/fetch_hot_total_low_fan_list"
+                query = {"page": 1, "page_size": 50, "date_window": 168, "keyword": keyword}
+            elif platform == "douyin":
+                path = (DEFAULTS["douyin"]["path"] if rule["path"].endswith("fetch_hot_total_low_fan_list") else rule["path"])
+                query = {"keyword": keyword, "cursor": 0, "sort_type": "1",
+                         "publish_time": str(settings["publish_time"]), "search_id": "", "backtrace": ""}
+            else:
+                path = rule["path"]
+                query = {"keyword": keyword, "page": page, "sort_type": "popularity_descending",
+                         "time_filter": {7: "一周内", 180: "半年内", 0: "不限"}[settings["publish_time"]]}
+            query.update(continuation.get(stream, {}))
+            try:
+                response = call(path, query, post=platform == "douyin")
+                rows = rows_from(response)
+            except tikhub.TikHubError as exc:
+                raise tikhub.TikHubError(f"{platform} 拉源失败：{exc}") from exc
+            fetched_at = datetime.now(timezone.utc).isoformat()
+            source_calls[platform] += 1
+            pages_by_keyword[platform][keyword] = max(page, pages_by_keyword[platform][keyword])
+            pages_by_source.setdefault(platform + ":" + source, {})[keyword] = page
+            more, next_params = pagination(response, platform)
+            if not rows or more is False:
+                exhausted.add(stream)
+            elif source == "search":
+                if platform == "douyin" and ("cursor" not in next_params or next_params["cursor"] == query["cursor"]):
+                    exhausted.add(stream)
+                    if page < settings["max_pages"]:
+                        incomplete = True
+                        warnings.append("抖音搜索缺少有效翻页游标，未继续翻页")
                 else:
-                    query = {"keyword": keyword, "page": page, "sort_type": "popularity_descending"}
-                try:
-                    rows = rows_from(call(rule["path"], query, post=platform == "douyin"))
-                except tikhub.TikHubError as exc:
-                    raise tikhub.TikHubError(f"{platform} 拉源失败：{exc}") from exc
-                source_calls[platform] += 1
-                pages_by_keyword[platform][keyword] = page
-                if not rows:
-                    exhausted.add((platform, keyword))
-                if len(rows) > 300 - scanned:
-                    incomplete = True
-                    warnings.append("已达扫描上限，结果未完整核对")
-                for obj in rows[:300 - scanned]:
-                    scanned += 1
-                    item = normalize(platform, obj)
-                    if item and item["key"] not in seen:
-                        seen.add(item["key"])
-                        pool.append(item)
+                    continuation[stream] = {**continuation.get(stream, {}), **next_params}
+            if len(rows) > 300 - scanned:
+                incomplete = True
+                warnings.append("已达扫描上限，结果未完整核对")
+            for obj in rows[:300 - scanned]:
+                scanned += 1
+                item = normalize(platform, obj)
+                if not item:
+                    continue
+                source_fans = item["fans"]
+                if source == "search" and item["fans"] == 0:
+                    item["fans"] = None
+                item.update(source=platform + ":" + source, metrics_source=path, fetched_at=fetched_at)
+                item["raw"].update(fans_source=source, metrics_source=path, fetched_at=fetched_at, keyword=keyword,
+                                   fans=source_fans, published_at=item["published_at"])
+                if item["key"] in originals:
+                    originals[item["key"]]["raw"].setdefault("alternatives", []).append(deepcopy(item["raw"]))
+                else:
+                    originals[item["key"]] = item
+                    pool.append(item)
+
+    def score_in_range(item, rule):
+        if settings["publish_time"]:
+            rule = {**rule, "max_age_days": min(rule["max_age_days"], settings["publish_time"])}
+        return score_item(item, rule, now=now)
 
     # 互动高的优先；仅当前档互动/日期有希望通过的作者才主动补粉。
-    pool.sort(key=lambda x: score_item(x, settings[x["platform"]], now=now)["interactions"] or 0, reverse=True)
+    pool.sort(key=lambda x: score_in_range(x, settings[x["platform"]])["interactions"] or 0, reverse=True)
     for item in pool:
         platform = item["platform"]
         rule = settings[platform]
-        probe = score_item(item, rule, now=now)
+        probe = score_in_range(item, rule)
         eligible = (probe["interactions"] is not None and probe["interactions"] >= rule["min_interactions"]
-                    and probe["age_days"] is not None and 0 <= probe["age_days"] <= rule["max_age_days"])
+                    and probe["age_days"] is not None and 0 <= probe["age_days"] <= min(
+                        rule["max_age_days"], settings["publish_time"] or rule["max_age_days"]))
         author_id = item["author_id"]
         cache_key = (platform, author_id)
         item["fans_note"] = ""
@@ -387,6 +486,8 @@ def preview(settings: dict, progress=None) -> dict:
                         authors_checked += 1
                     fans_cache[cache_key] = profile_fans(call(rule["user_path"], {param: author_id}))
                 except (tikhub.TikHubError, ValueError) as exc:
+                    if is_balance_error(exc):
+                        raise tikhub.TikHubError("TikHub 余额不足，请充值", status=402) from exc
                     warnings.append(f"{platform} 补粉失败，粉丝待核：{exc}")
                     fans_cache[cache_key] = None
                 item["fans"] = fans_cache[cache_key]
@@ -406,8 +507,8 @@ def preview(settings: dict, progress=None) -> dict:
         warnings.append("已达调用或扫描上限，结果未完整核对")
     scored_pool = []
     for item in pool:
-        scored = score_item(item, settings[item["platform"]], now=now)
-        strict = score_item(item, preset(item["platform"], 1), now=now)["passed"]
+        scored = score_in_range(item, settings[item["platform"]])
+        strict = score_in_range(item, preset(item["platform"], 1))["passed"]
         scored.update(strict_pass=strict, pass_level=("pending" if scored["pending"] else
                       "strict" if strict else "tier" if scored["passed"] else "pool"))
         scored_pool.append(scored)
@@ -430,8 +531,10 @@ def preview(settings: dict, progress=None) -> dict:
             "coverage": {"incomplete": incomplete, "authors_checked": authors_checked,
                          "keywords": {p: settings[p]["keywords"] for p in settings["platforms"]},
                          "max_pages": settings["max_pages"], "pages_by_keyword": pages_by_keyword,
+                         "pages_by_source": pages_by_source, "publish_time": settings["publish_time"],
+                         "douyin_sources": settings["douyin_sources"],
                          "source_calls": source_calls, "scan_limit": 300,
-                         "source_window_hours": {p: settings["source_window_hours"] if p == "douyin" and settings[p]["source"] == "lowfan" else None
+                         "source_window_hours": {p: 168 if p == "douyin" and "lowfan" in settings["douyin_sources"] else None
                                                  for p in settings["platforms"]}},
             "warnings": list(dict.fromkeys(warnings)), "scanned": scanned, "calls": calls, "limit": settings["limit"]}
 

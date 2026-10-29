@@ -28,7 +28,7 @@ vm.runInContext(`
 initViralControls();
 if ($('viralTierName').textContent !== '宽松') throw Error('默认档');
 viralBatch = {scanned:4, pool:[
-  {key:'a',platform:'douyin',title:'灵感',fans:1000,interactions:1500,multiplier:1.5,age_days:1,url:'https://www.douyin.com/video/1',cover:'https://example.com/a.jpg'},
+  {key:'a',platform:'douyin',title:'灵感',fans:1000,interactions:1500,multiplier:1.5,age_days:1,url:'https://www.douyin.com/video/1',cover:'https://example.com/a.jpg',source:'douyin:search'},
   {key:'b',platform:'douyin',fans:null,interactions:15000,multiplier:null,age_days:1},
   {key:'c',platform:'douyin',fans:1000,interactions:15000,multiplier:15,age_days:null}
 ]};
@@ -36,6 +36,7 @@ refilterViral();
 if (viralRows.length !== 1 || !$('viralCounts').textContent.includes('待核 2')) throw Error('宽松/待核统计');
 if (!$('viralGrid') || !$('viralGrid').children.length) throw Error('封面网格未渲染');
 const cardKids = ($('viralGrid').children || []).flatMap(c => c.children || []);
+if (!JSON.stringify($('viralGrid').children).includes('抖音搜索')) throw Error('卡片来源');
 if (!cardKids.some(ch => ch.tag === 'img' && String(ch.className || '').includes('preview-cover'))) throw Error('应显示封面图');
 viralSelected.add('a');
 $('viralTier').value = '1'; $('viralTier').events.input();
@@ -67,19 +68,21 @@ console.log('slider interactions: OK; network requests: 0');
     const submitted = [];
     api = async (path, options) => { submitted.push({path, body:options.body}); return {job_id:'mock'}; };
     watchJob = (id, callback) => callback({state:'done', viral:{pool:[], scanned:12, calls:9,
-      coverage:{keywords:{douyin:['AI','科普']}, source_window_hours:{douyin:72},
+      coverage:{keywords:{douyin:['AI','科普']}, publish_time:180,douyin_sources:['search','lowfan'],
         max_pages:3, pages_by_keyword:{douyin:{AI:3, '科普':2}}, source_calls:{douyin:5}}}});
+    $('viralSearchSource').checked = true;
+    $('viralLowfanSource').checked = true;
     $('viralDouyin').checked = true;
     $('viralXhs').checked = true;
     $('viralKeywords').value = ' AI，科普\\nAI ';
-    $('viralSourceWindow').value = '72';
+    $('viralSourceWindow').value = '180';
     $('viralMaxPages').value = '3';
     await searchViral({preventDefault(){}});
     if (submitted.length !== 1) throw Error('应只提交一次查询');
     const body = submitted[0].body;
-    if (submitted[0].path !== '/api/viral/preview' || body.source_window_hours !== 72 || body.max_pages !== 3) throw Error('源参数');
+    if (submitted[0].path !== '/api/viral/preview' || body.publish_time !== 180 || JSON.stringify(body.douyin_sources) !== JSON.stringify(['search','lowfan']) || body.max_pages !== 3) throw Error('源参数');
     if (JSON.stringify(body.keywords) !== JSON.stringify(['AI','科普'])) throw Error('批量拆词去重');
-    for (const text of ['AI（3页）','科普（2页）','72 小时','扫描 12 条','TikHub 调用 9 次']) {
+    for (const text of ['AI（3页）','科普（2页）','近半年','168 小时','扫描 12 条','TikHub 调用 9 次']) {
       if (!$('viralStatus').textContent.includes(text)) throw Error('摘要缺少：'+text);
     }
     $('viralKeywords').value = Array.from({length:20}, (_,i) => '词'+i).join('，');
@@ -91,6 +94,17 @@ console.log('slider interactions: OK; network requests: 0');
     $('viralKeywords').value = '词'.repeat(81);
     await searchViral({preventDefault(){}});
     if (submitted.length !== 2) throw Error('超长关键词应拒绝');
+    $('viralKeywords').value = 'AI';
+    $('viralSearchSource').checked = false; $('viralLowfanSource').checked = false;
+    await searchViral({preventDefault(){}});
+    if (submitted.length !== 2 || !$('viralStatus').textContent.includes('来源')) throw Error('未选来源应拒绝');
+    $('viralSearchSource').checked = true;
+    await searchViral({preventDefault(){}});
+    if (JSON.stringify(submitted[2].body.douyin_sources) !== JSON.stringify(['search'])) throw Error('单搜索来源');
+    viralBatch = {coverage:{publish_time:7},pool:[{key:'old',platform:'douyin',fans:1000,interactions:10000,multiplier:10,age_days:8}]};
+    $('viralShowPool').checked = false; refilterViral();
+    if (viralRows.length) throw Error('拖条不可绕过已查询发布时间范围');
+
   })()`, context);
   assert.equal(requests, 0);
   console.log('batch query controls and summary: OK; network requests: 0');

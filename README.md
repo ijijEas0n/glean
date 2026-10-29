@@ -163,7 +163,7 @@ library/
 | `POST /api/jobs` `{"url": ..., "options": {"download_media": true, "transcribe": true}}` | 提交抓取，返回 `job_id` |
 | `GET /api/jobs/<job_id>` | 轮询 `job.state`：`queued` / `running` / `done` / `partial` / `failed` |
 | `POST /api/preview` `{"url": <主页>, "options": {"limit": 50}}` | 博主主页先预览作品清单 |
-| `POST /api/viral/preview` `{"platforms":["douyin","xiaohongshu"],"keywords":["AI"],"source_window_hours":168,"max_pages":2,"tier":3,"limit":20}` | 低粉爆款候选筛选；202 返回 job_id，结果读 job.viral.candidates |
+| `POST /api/viral/preview` `{"platforms":["douyin","xiaohongshu"],"keywords":["AI"],"publish_time":7,"douyin_sources":["search","lowfan"],"max_pages":2,"tier":3,"limit":20}` | 低粉爆款候选筛选；202 返回 job_id，结果读 job.viral.candidates |
 | `POST /api/viral/save` `{"items":[{"platform":"douyin","id":"作品ID"}],"options":{"transcribe":false}}` | 只保存用户勾选的作品，复用批量 jobs；已有作品跳过下载 |
 
 `examples/SKILL.md` 是模板，里面有 `<GLEAN_HOST>`、`<GLEAN_ROOT>` 等占位符，**不能原样复制给 Agent**。在仓库根目录生成可用副本：
@@ -216,13 +216,23 @@ MIT © 2026 迅仔
 
 拖条或改门槛只用本次 `pool` 免费重筛，不拉源、不补查作者；换关键词/平台后点「重新查询」才消耗 TikHub 额度。界面显示「严选 N · 本档 M · 本批参考 K · 待核 U」，这些计数有包含关系，不能相加。「看本批参考」展示未达标原因、待核记录，仍须明确勾选才入库。每次最多选择100条入库。
 
-缺粉不当0，缺日期不伪装近期，缺互动也标待核；待核不算任何档通过。即使旧调用传 `allow_missing_date:true`，也不会放行日期未知项。无候选时显示扫描/可识别条数，提示向宽松拖或看参考，不能断言关键词没有好内容。本地门槛 `max_age_days` 只过滤本批数据，不扩大源覆盖。抖音低粉榜源时间窗 `source_window_hours` 默认168小时，可设24–168的整数（页面提供1/3/7天；TikHub 低粉榜实测超过168小时会返回异常）；小红书仍按热度搜索。`max_pages` 默认2，可设1–3，每平台每关键词分别翻页，抖音每页50条。关键词支持1–20个，每词去空白后最多80字、去重；页面支持逗号或换行粘贴。先覆盖所有平台/关键词首屏，有余量再翻深页，最后补查粉丝；空页停止该关键词。最多300条扫描、24次逻辑调用（重试另计），触顶标 `coverage.incomplete` 并提示警告。自定义抖音 `source:search` 仍仅首屏，要求深翻时会标覆盖不全。结果 `coverage` 返回实际源时间窗、关键词、每词已请求页数（含空页）、分平台拉源调用次数；`calls` 包含补粉，页面摘要同步显示。本批保存在页面/内存任务中，重启或刷新后须重新查询，未知粉不会随拖条自动补查。
+缺粉不当0，缺日期不伪装近期，缺互动也标待核；待核不算任何档通过。即使旧调用传 `allow_missing_date:true`，也不会放行日期未知项。无候选不能断言关键词没有好内容，可拖宽松或看本批参考。
+
+默认先按关键词发现，再核验低粉：抖音 POST `/api/v1/douyin/search/fetch_video_search_v2`，最多点赞 `sort_type="1"`；勾选的低粉榜 `/api/v1/douyin/billboard/fetch_hot_total_low_fan_list` 作为补充，固定 `date_window=168`，每词仅 1 页。页面可单独勾选「抖音搜索 / 抖音低粉榜」，默认都开，API 对应 `douyin_sources:["search","lowfan"]`。旧配置显式 `douyin.source` 仍兼容单来源，新请求的 `douyin_sources` 优先。旧 `source_window_hours` 仍接受 24–168 的整数，但不再改变榜单固定窗口。
+
+「发布时间范围」对两平台生效：`publish_time` 默认 7，可选 180（近半年）或 0（不限）。抖音传同名字符串参数，小红书 `search_notes` 显式传 `time_filter` 为「一周内 / 半年内 / 不限」。接口可能返回旧作品，因此按真实发布日期再次复核；高级门槛 `max_age_days` 与所选发布时间范围取较严格值（选不限仍保留高级门槛）。下方拖条仅重筛本批，不扩大搜索范围或补查作者。
+
+`max_pages` 默认 2，可设 1–3；搜索逐平台逐关键词翻页，抖音使用响应的 cursor/search_id/backtrace，小红书沿用 search_id/search_session_id。空页或 `has_more=false` 停止；抖音游标缺失/不前进时停止并标覆盖不全。关键词支持 1–20 个，去重，每词最多 80 字，页面可逗号或换行粘贴。先覆盖所有来源/关键词首屏，再搜索深翻，最后按作者缓存补粉；最多 300 条扫描、24 次逻辑调用（重试另计），触顶标 `coverage.incomplete`。
+
+抖音搜索自带正粉丝数直接使用，0/缺失标待核，只为互动和日期可能过线的作者补查 `handler_user_profile`；小红书继续以作者接口核粉，补查受同一预算约束。余额不足会显示「TikHub 余额不足，请充值」并停止后续查询。
+
+跨来源、跨关键词按平台+作品 ID 去重。每条卡片标来源，结果保留 `source`、`metrics_source`、`fetched_at`；指标冲突保留首个来源，后续来源快照存入 `raw.alternatives`，不相加。`coverage` 返回各词页数、分来源页数 `pages_by_source`、调用数和发布时间范围；`calls` 含补粉。搜索结果来自平台搜索接口，不保证全量覆盖或语义相关；搜索与榜单指标也可能口径不同。本批仅保存在页面/内存任务中，刷新或重启后须重新查询。
 
 
 Agent：先请求 `/api/viral/preview`，每5秒轮询 `/api/jobs/<job_id>` 的 `job.state`，终态读 `job.viral.candidates`；展示平台、标题、作者、粉丝、互动、倍数和日期给用户，等用户选择后才调 `/api/viral/save`。
 保存默认关闭转写，可显式传 `options.transcribe=true`，并继续通过原有 job 查看入库进度。全已存在时 `job_id=null`，直接使用 `existing[].item_id`。
 
 门槛可在 preview 的 `thresholds.<平台>` 临时覆盖，持久配置用 `/api/config` 的 `viral` 对象（部分对象按默认值深合并；再次保存 viral 对象会替换前次自定义对象）。`GLEAN_VIRAL_ENABLED=0` 可关闭查询入口的后端能力。
-完整配置、返回字段、端点来源和待实测限制见 [SPEC.md](SPEC.md#427-低粉爆款候选筛选)。当前只做禁网 mock 验证；真实 TikHub 返回结构、权限和计费尚待用户授权实测。
+完整配置、返回字段、端点来源和待实测限制见 [SPEC.md](SPEC.md#427-低粉爆款候选筛选)。解析和分页已用 2026-10-29 真实响应的脱敏离线 fixture 回归；这不代表当前线上权限、余额或完整搜索链路已测活。
 
 默认档可用 `POST /api/config` 保存 `{"viral":{"tier":3}}`（viral 对象整体替换，请保留已有自定义项）；仅保存配置，不发起查询。preview 支持 `tier:0–4` 和分平台 `thresholds` 覆盖。

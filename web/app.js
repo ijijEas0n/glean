@@ -913,14 +913,11 @@ async function loadCollectDefaults() {
     if (!viralDirty) {
       const t = state.config.viral?.tier;
       if (Number.isInteger(t) && t >= 0 && t <= 4) $('viralTier').value = t;
-      const hours = state.config.viral?.source_window_hours;
-      if (Number.isInteger(hours) && hours >= 24 && hours <= 720) {
-        if (![24, 72, 168, 336, 720].includes(hours)) {
-          const option = node('option', '', `${hours} 小时`); option.value = hours;
-          $('viralSourceWindow').append(option);
-        }
-        $('viralSourceWindow').value = hours;
-      }
+      const days = state.config.viral?.publish_time;
+      if ([0, 7, 180].includes(days)) $('viralSourceWindow').value = days;
+      const sources = state.config.viral?.douyin_sources || (state.config.viral?.douyin?.source ? [state.config.viral.douyin.source] : ['search', 'lowfan']);
+      $('viralSearchSource').checked = sources.includes('search');
+      $('viralLowfanSource').checked = sources.includes('lowfan');
       const pages = state.config.viral?.max_pages;
       if (Number.isInteger(pages) && pages >= 1 && pages <= 3) $('viralMaxPages').value = pages;
       applyViralTier();
@@ -1046,7 +1043,7 @@ function initViralControls() {
     });
     $('viralThresholds').append(group);
   }
-  for (const id of ['viralKeywords', 'viralSourceWindow', 'viralMaxPages']) $(id).addEventListener('input', () => { viralDirty = true; });
+  for (const id of ['viralKeywords', 'viralSourceWindow', 'viralMaxPages', 'viralSearchSource', 'viralLowfanSource']) $(id).addEventListener('input', () => { viralDirty = true; });
   $('viralTier').addEventListener('input', () => { viralDirty = true; applyViralTier(); });
   $('viralShowPool').addEventListener('change', refilterViral);
   applyViralTier();
@@ -1061,9 +1058,11 @@ function refilterViral() {
     viralRows = []; viralSelected.clear(); renderViral(); return;
   }
   const rules = viralRules();
+  const range = viralBatch.coverage?.publish_time || 0;
+  const withinRange = rule => ({...rule, max_age_days: range ? Math.min(rule.max_age_days, range) : rule.max_age_days});
   const pool = viralBatch.pool.map(row => {
-    const scored = ViralFilter.score(row, rules[row.platform]);
-    scored.strict_pass = ViralFilter.score(row, ViralFilter.preset(row.platform, 1)).passed;
+    const scored = ViralFilter.score(row, withinRange(rules[row.platform]));
+    scored.strict_pass = ViralFilter.score(row, withinRange(ViralFilter.preset(row.platform, 1))).passed;
     return scored;
   });
   const count = pool.filter(x => x.passed).length;
@@ -1074,8 +1073,8 @@ function refilterViral() {
     const pages = coverage.pages_by_keyword?.[p] || {};
     return `${platformLabel(p)}：${words.map(k => `${k}（${pages[k] || 0}页）`).join('、')}，拉源 ${coverage.source_calls?.[p] || 0} 次`;
   }).join('；');
-  const windowHours = coverage.source_window_hours?.douyin;
-  const base = `${sources ? sources + '。' : ''}${windowHours ? `抖音源时间窗 ${windowHours} 小时。` : ''}每词最多 ${coverage.max_pages || 1} 页，扫描 ${viralBatch.scanned || 0} 条，可识别去重 ${pool.length} 条，TikHub 调用 ${viralBatch.calls || 0} 次（含补粉，重试另计）。同批重筛不消耗查询额度。`;
+  const rangeLabel = {7:'近 7 天', 180:'近半年', 0:'不限'}[coverage.publish_time ?? 7];
+  const base = `${sources ? sources + '。' : ''}发布时间范围：${rangeLabel}。${coverage.douyin_sources?.includes('lowfan') ? '低粉榜固定 168 小时，每词 1 页。' : ''}每词最多 ${coverage.max_pages || 1} 页，扫描 ${viralBatch.scanned || 0} 条，可识别去重 ${pool.length} 条，TikHub 调用 ${viralBatch.calls || 0} 次（含补粉，重试另计）。同批重筛不消耗查询额度。`;
   $('viralStatus').textContent = base + (count ? '' : ' 当前档没有候选，可往宽松拖或看本批参考；不能据此判断关键词没有好内容。')
     + (viralBatch.coverage?.incomplete ? ' 覆盖不全，结果未完整核对。' : '') + (viralBatch.warnings || []).join('；');
   viralRows = pool.filter(x => $('viralShowPool').checked || x.passed)
@@ -1103,7 +1102,7 @@ function renderViral() {
     if (row.local) card.append(node('span', 'saved-mark', '已入库'));
     const body = node('div', 'viral-card-body');
     body.append(node('div', 'viral-card-title', row.title || '（无标题）'));
-    body.append(node('div', 'viral-card-meta', `${platformLabel(row.platform)} · ${row.author || '作者未知'}`));
+    body.append(node('div', 'viral-card-meta', `${platformLabel(row.platform)} · ${row.author || '作者未知'} · ${{'douyin:search':'抖音搜索','douyin:lowfan':'抖音低粉榜','xiaohongshu:search':'小红书搜索'}[row.source] || '来源待核'}`));
     const mult = row.multiplier == null ? '倍待核' : `${Number(row.multiplier).toFixed(1)}×`;
     const age = row.age_days == null ? '日期待核' : `${Math.floor(row.age_days)}天前`;
     body.append(node('div', 'viral-card-stats', `粉 ${row.fans ?? '待核'} · 互动 ${row.interactions ?? '待核'} · ${mult}`));
@@ -1137,6 +1136,10 @@ async function searchViral(event) {
   event.preventDefault(); if (viralBusy) return;
   const platforms = []; if ($('viralDouyin').checked) platforms.push('douyin'); if ($('viralXhs').checked) platforms.push('xiaohongshu');
   if (!platforms.length) { $('viralStatus').textContent = '请至少选择一个平台'; return; }
+  const douyin_sources = [];
+  if ($('viralSearchSource').checked) douyin_sources.push('search');
+  if ($('viralLowfanSource').checked) douyin_sources.push('lowfan');
+  if (platforms.includes('douyin') && !douyin_sources.length) { $('viralStatus').textContent = '请至少选择一个抖音来源'; return; }
   viralDirty = true;
   const keywords = [...new Set($('viralKeywords').value.split(/[,，\r\n]/).map(x => x.trim()).filter(Boolean))];
   if (keywords.length > 20 || keywords.some(k => [...k].length > 80)) {
@@ -1145,7 +1148,7 @@ async function searchViral(event) {
   viralBusy = true; viralBatch = null; $('viralCounts').textContent = ''; viralRows = []; viralSelected.clear(); renderViral();
   $('viralStatus').textContent = '正在查询候选，可能需要几分钟…';
   try {
-    const r = await api('/api/viral/preview', { method: 'POST', body: { platforms, source_window_hours: Number($('viralSourceWindow').value), max_pages: Number($('viralMaxPages').value), ...(keywords.length ? { keywords } : {}), tier: Number($('viralTier').value), thresholds: viralRules(), limit: 100 } });
+    const r = await api('/api/viral/preview', { method: 'POST', body: { platforms, publish_time: Number($('viralSourceWindow').value), ...(douyin_sources.length ? {douyin_sources} : {}), max_pages: Number($('viralMaxPages').value), ...(keywords.length ? { keywords } : {}), tier: Number($('viralTier').value), thresholds: viralRules(), limit: 100 } });
     watchJob(r.job_id, job => {
       if (!['done', 'partial', 'failed'].includes(job.state)) return;
       viralBusy = false;

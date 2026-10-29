@@ -111,7 +111,7 @@ class ViralTests(unittest.TestCase):
         self.assertEqual(empty['cover'], '')
 
     def settings(self, platforms=None, **extra):
-        return viral.prepare({'platforms': platforms or list(viral.PLATFORMS), 'max_pages': 1, **extra})
+        return viral.prepare({'platforms': platforms or list(viral.PLATFORMS), 'max_pages': 1, 'douyin_sources': ['lowfan'], 'publish_time': 0, **extra})
 
     def test_depth_defaults_and_validation(self):
         settings = viral.prepare({})
@@ -151,20 +151,20 @@ class ViralTests(unittest.TestCase):
             return {'data': {'fans': 1000}}
         self.post.side_effect = post; self.get.side_effect = get
         result = viral.preview(self.settings(keywords=['A', 'B'], max_pages=3, source_window_hours=72))
-        expected = [(p, k, page) for page in (1, 2, 3) for p in viral.PLATFORMS for k in ('A', 'B')]
+        expected = [(p, k, page) for page in (1, 2, 3) for p in viral.PLATFORMS for k in ('A', 'B') if page == 1 or p == 'xiaohongshu']
         self.assertEqual([(p, q['keyword'], q['page']) for p, q in order], expected)
         for p, query in order:
             if p == 'douyin':
-                self.assertEqual(query['date_window'], 72)
+                self.assertEqual(query['date_window'], 168)
                 self.assertEqual(query['page_size'], 50)
             else:
                 self.assertEqual(query['sort_type'], 'popularity_descending')
-        self.assertEqual(result['scanned'], 12)
+        self.assertEqual(result['scanned'], 8)
         self.assertEqual(len(result['pool']), 2)
-        self.assertEqual(result['calls'], 13)
-        self.assertEqual(result['coverage']['source_calls'], {'douyin': 6, 'xiaohongshu': 6})
-        self.assertEqual(result['coverage']['pages_by_keyword']['douyin'], {'A': 3, 'B': 3})
-        self.assertEqual(result['coverage']['source_window_hours'], {'douyin': 72, 'xiaohongshu': None})
+        self.assertEqual(result['calls'], 9)
+        self.assertEqual(result['coverage']['source_calls'], {'douyin': 2, 'xiaohongshu': 6})
+        self.assertEqual(result['coverage']['pages_by_keyword']['douyin'], {'A': 1, 'B': 1})
+        self.assertEqual(result['coverage']['source_window_hours'], {'douyin': 168, 'xiaohongshu': None})
         self.assertFalse(result['coverage']['incomplete'])
 
     def test_budget_prioritizes_keywords_before_deeper_pages_and_profiles(self):
@@ -181,7 +181,7 @@ class ViralTests(unittest.TestCase):
         settings['max_calls'] = 5
         result = viral.preview(settings)
         self.assertEqual(order, [('douyin', 'A', 1), ('douyin', 'B', 1),
-                                ('xiaohongshu', 'A', 1), ('xiaohongshu', 'B', 1), ('douyin', 'A', 2)])
+                                ('xiaohongshu', 'A', 1), ('xiaohongshu', 'B', 1), ('xiaohongshu', 'A', 2)])
         self.assertEqual(result['calls'], 5)
         self.assertEqual(result['coverage']['authors_checked'], 0)
         self.assertTrue(result['coverage']['incomplete'])
@@ -191,8 +191,8 @@ class ViralTests(unittest.TestCase):
         self.post.side_effect = lambda path, q: {'data': {'objs': [] if q['keyword'] == 'A' else [dy()]}}
         result = viral.preview(self.settings(['douyin'], keywords=['A', 'B'], max_pages=3))
         self.assertEqual([(c.args[1]['keyword'], c.args[1]['page']) for c in self.post.call_args_list],
-                         [('A', 1), ('B', 1), ('B', 2), ('B', 3)])
-        self.assertEqual(result['coverage']['pages_by_keyword']['douyin'], {'A': 1, 'B': 3})
+                         [('A', 1), ('B', 1)])
+        self.assertEqual(result['coverage']['pages_by_keyword']['douyin'], {'A': 1, 'B': 1})
 
     def test_prepare_validates_before_network(self):
         for payload in ({'limit': 0}, {'limit': True}, {'platforms': ['other']}, {'keywords': []},
@@ -213,13 +213,13 @@ class ViralTests(unittest.TestCase):
         config = {'viral': {'douyin': {'max_fans': 2000, 'source': 'search',
                                        'path': '/api/v1/douyin/search/fetch_video_search_v2'}}}
         with patch.object(viral, 'load_config', return_value=config):
-            settings = self.settings(['douyin'], thresholds={'douyin': {'min_multiplier': 4}})
+            settings = self.settings(['douyin'], douyin_sources=['search'], thresholds={'douyin': {'min_multiplier': 4}})
         self.assertEqual(settings['douyin']['max_fans'], 2000)
         self.assertEqual(settings['douyin']['max_age_days'], 14)
         self.assertEqual(settings['douyin']['min_multiplier'], 4)
         self.post.side_effect = None; self.post.return_value = {'data': {'data': []}}
         viral.preview(settings)
-        self.assertEqual(self.post.call_args.args, (settings['douyin']['path'], {'keyword': 'AI', 'cursor': 0}))
+        self.assertEqual(self.post.call_args.args, (settings['douyin']['path'], {'keyword': 'AI', 'cursor': 0, 'sort_type':'1', 'publish_time':'0', 'search_id':'', 'backtrace':''}))
 
     def test_douyin_lowfan_pass_fail_dedup_and_local(self):
         self.post.side_effect = None
@@ -282,8 +282,175 @@ class ViralTests(unittest.TestCase):
         self.assertEqual(result['candidates'], [])
         self.assertIn('上限', ' '.join(result['warnings']))
         self.post.side_effect = tikhub.TikHubError('mock 402')
-        self.assertRaisesRegex(tikhub.TikHubError, 'mock 402', viral.preview, self.settings(['douyin']))
+        self.assertRaisesRegex(tikhub.TikHubError, 'TikHub 余额不足，请充值', viral.preview, self.settings(['douyin']))
         self.assertRaisesRegex(tikhub.TikHubError, '结构', viral.rows_from, {'data': {'unexpected': []}})
+
+    def fixture(self, name):
+        return json.loads((Path(__file__).parent / 'fixtures' / 'viral' / (name + '.json')).read_text())
+
+    def test_real_search_shapes_title_and_zero_fans(self):
+        rows = viral.rows_from(self.fixture('dy-general-0'))
+        works = [viral.normalize('douyin', x) for x in rows]
+        self.assertGreater(sum(x is None for x in works), 0)  # 真实用户卡被跳过
+        works = [x for x in works if x]
+        self.assertEqual(len(works), 16)
+        self.assertTrue(all(x['fans'] == 0 for x in works))
+        card = self.fixture('dy-week-0')['data']['business_data'][0]
+        card['data']['aweme_info']['title'] = ''
+        card['data']['aweme_info']['item_title'] = ''
+        self.assertEqual(viral.normalize('douyin', card)['title'], card['data']['aweme_info']['desc'][:500])
+        self.assertEqual(len([x for x in viral.rows_from(self.fixture('dy-likes-0')) if viral.normalize('douyin', x)]), 7)
+        red = [viral.normalize('xiaohongshu', x) for x in viral.rows_from(self.fixture('xhs-monitor-0'))]
+        self.assertEqual(len([x for x in red if x]), 20)
+        self.assertTrue(all(x['published_at'] and x['likes'] is not None and x['collects'] is not None for x in red if x))
+
+    def test_new_defaults_and_time_validation(self):
+        settings = viral.prepare({})
+        self.assertEqual(settings['publish_time'], 7)
+        self.assertEqual(settings['douyin_sources'], ['search', 'lowfan'])
+        self.assertEqual(settings['max_calls'], 24)
+        self.assertTrue(settings['douyin']['path'].endswith('fetch_video_search_v2'))
+        for value in (True, None, '7', 14, 7.0):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                viral.prepare({'publish_time': value})
+        for value in ([], ['other'], 'search'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                viral.prepare({'douyin_sources': value})
+
+    def test_real_continuation_and_both_time_parameters(self):
+        for days, label in ((7, '一周内'), (180, '半年内'), (0, '不限')):
+            self.post.side_effect = None; self.get.side_effect = None
+            self.post.return_value = self.fixture('dy-likes-0')
+            self.get.return_value = self.fixture('xhs-monitor-0')
+            self.post.reset_mock(); self.get.reset_mock()
+            result = viral.preview(self.settings(max_pages=2, publish_time=days, douyin_sources=['search']))
+            queries = [c.args[1] for c in self.post.call_args_list]
+            cfg = self.fixture('dy-likes-0')['data']['business_config']
+            self.assertEqual(queries[0]['publish_time'], str(days))
+            self.assertEqual(queries[0]['sort_type'], '1')
+            self.assertEqual(queries[1]['cursor'], cfg['next_page']['cursor'])
+            self.assertEqual(queries[1]['search_id'], cfg['next_page']['search_id'])
+            self.assertEqual(queries[1]['backtrace'], cfg['backtrace'])
+            red_queries = [c.args[1] for c in self.get.call_args_list if c.args[0].endswith('search_notes')]
+            self.assertEqual(red_queries[0]['time_filter'], label)
+            for key in ('search_id', 'search_session_id'):
+                self.assertEqual(red_queries[1][key], self.fixture('xhs-monitor-0')['data'][key])
+            self.assertEqual(result['coverage']['publish_time'], days)
+
+    def test_legacy_path_cannot_redirect_search_to_board(self):
+        config = {'viral':{'douyin':{'source':'lowfan', 'path':'/api/v1/douyin/billboard/fetch_hot_total_low_fan_list'}}}
+        self.post.side_effect = None; self.post.return_value = {'data':{'business_data':[]}}
+        with patch.object(viral, 'load_config', return_value=config):
+            settings = viral.prepare({'platforms':['douyin'], 'douyin_sources':['search']})
+        viral.preview(settings)
+        self.assertTrue(self.post.call_args.args[0].endswith('fetch_video_search_v2'))
+        config['viral']['douyin_sources'] = ['search']
+        with patch.object(viral, 'load_config', return_value=config):
+            self.assertEqual(viral.prepare({})['douyin_sources'], ['search'])
+
+    def test_outside_publish_range_does_not_spend_on_profiles(self):
+        self.post.side_effect = None
+        self.post.return_value = {'data':{'objs':[dy(fans_cnt=None, sec_uid='u', publish_time=(NOW-timedelta(days=8)).timestamp())]}}
+        result = viral.preview(self.settings(['douyin'], publish_time=7))
+        self.get.assert_not_called()
+        self.assertEqual(result['calls'], 1)
+
+    def test_real_has_more_false_and_missing_cursor_stop(self):
+        self.post.side_effect = None; self.post.return_value = self.fixture('dy-week-0')
+        viral.preview(self.settings(['douyin'], max_pages=3, douyin_sources=['search']))
+        self.assertEqual(self.post.call_count, 1)
+        self.post.reset_mock(); self.post.return_value = {'data': {'business_data': [{'aweme_info': {
+            'aweme_id':'123', 'statistics':{'digg_count':1}}}]}}
+        result = viral.preview(self.settings(['douyin'], max_pages=3, douyin_sources=['search']))
+        self.assertEqual(self.post.call_count, 1)
+        self.assertTrue(result['coverage']['incomplete'])
+
+    def test_zero_fans_pending_then_cached_profile(self):
+        response = self.fixture('dy-general-0')
+        cards = [c for c in response['data']['business_data'] if viral.normalize('douyin', c)][:2]
+        for i, card in enumerate(cards):
+            work = card['data']['aweme_info']
+            work['aweme_id'] = str(100+i)
+            work['author']['sec_uid'] = 'same-author'
+            work['create_time'] = NOW.timestamp()
+            work['statistics']['digg_count'] = 10000
+        response['data']['business_data'] = cards
+        self.post.side_effect = None; self.post.return_value = response
+        self.get.side_effect = None; self.get.return_value = {'data': {'user': {'follower_count':1000}}}
+        settings = self.settings(['douyin'], douyin_sources=['search'])
+        settings['max_calls'] = 1
+        result = viral.preview(settings)
+        self.assertTrue(all(x['fans'] is None and x['pending'] for x in result['pool']))
+        self.assertFalse(result['candidates'])
+        self.get.assert_not_called()
+        result = viral.preview(self.settings(['douyin'], douyin_sources=['search']))
+        self.assertEqual(self.get.call_count, 1)
+        self.assertEqual(len(result['candidates']), 2)
+        self.assertTrue(all(x['raw']['fans_source'] == 'profile' for x in result['pool']))
+
+    def test_cross_source_keyword_conflicts_keep_first_metrics(self):
+        def post(path, params):
+            if 'billboard' in path:
+                return {'data': {'objs':[dy(like_cnt=1, fans_cnt=5)]}}
+            return {'data': {'business_data':[{'data': {'aweme_info': {
+                'aweme_id':'123', 'author':{'follower_count':1000},
+                'statistics':{'digg_count':10000}, 'create_time':NOW.timestamp()}}}],
+                'has_more':False}}
+        self.post.side_effect = post
+        result = viral.preview(self.settings(['douyin'], keywords=['A','B'], douyin_sources=['lowfan','search']))
+        row, = result['pool']
+        self.assertEqual((row['likes'],row['fans']), (10000,1000))
+        self.assertEqual(row['source'], 'douyin:search')
+        self.assertTrue(row['fetched_at'])
+        self.assertEqual(row['raw']['metrics_source'], row['metrics_source'])
+        self.assertEqual(len(row['raw']['alternatives']), 3)
+        self.assertEqual(row['raw']['alternatives'][-1]['likes'], 1)
+        self.assertEqual(result['calls'], 4)
+        self.assertEqual(result['coverage']['pages_by_source']['douyin:lowfan'], {'A':1,'B':1})
+
+    def test_local_date_recheck_caps_search_range(self):
+        self.post.side_effect = None
+        self.post.return_value = {'data': {'objs':[dy(publish_time=(NOW-timedelta(days=8)).timestamp())]}}
+        result = viral.preview(self.settings(['douyin'], publish_time=7))
+        self.assertEqual(result['candidates'], [])
+        self.assertFalse(result['pool'][0]['strict_pass'])
+        self.assertEqual(result['preset']['name'], '宽松')
+        self.assertEqual(len(viral.preview(self.settings(['douyin'], publish_time=180))['candidates']), 1)
+
+    def test_balance_error_response_and_exception_stop_all_calls(self):
+        error = self.fixture('balance-402')
+        for response in (error, {'code':402,'message':'Insufficient balance'}, {'data':error}):
+            self.post.side_effect = None; self.post.return_value = response; self.post.reset_mock()
+            with self.assertRaisesRegex(tikhub.TikHubError, 'TikHub 余额不足，请充值'):
+                viral.preview(self.settings(['douyin'], keywords=['A','B'], douyin_sources=['search','lowfan']))
+            self.assertEqual(self.post.call_count, 1)
+        self.post.side_effect = tikhub.TikHubError('payment', status=402)
+        with self.assertRaisesRegex(tikhub.TikHubError, 'TikHub 余额不足，请充值'):
+            viral.preview(self.settings(['douyin']))
+        self.post.side_effect = None
+        self.post.return_value = {'data': {'objs':[dy(fans_cnt=None, sec_uid='u')]}}
+        self.get.side_effect = tikhub.TikHubError('payment', status=402)
+        with self.assertRaisesRegex(tikhub.TikHubError, 'TikHub 余额不足，请充值'):
+            viral.preview(self.settings(['douyin']))
+        # 作品 ID 中包含 402 不应误判成余额不足。
+        self.assertEqual(len(viral.rows_from({'data':{'objs':[dy('14021')]}})), 1)
+
+    def test_search_first_screens_then_depth_then_profiles_budget_and_scan(self):
+        order = []
+        def post(path, q):
+            order.append(('lowfan' if 'billboard' in path else 'search', q['keyword'], q.get('cursor',0)))
+            return {'data':{'objs':[dy(fans_cnt=None, sec_uid='u')], 'cursor': q.get('cursor',0)+8, 'has_more':1}}
+        self.post.side_effect = post
+        self.get.side_effect = None; self.get.return_value = {'data':{'fans':1000}}
+        result = viral.preview(self.settings(['douyin'], keywords=['A','B'], max_pages=3, douyin_sources=['search','lowfan']))
+        self.assertEqual(order, [('search','A',0),('search','B',0),('lowfan','A',0),('lowfan','B',0),
+                                 ('search','A',8),('search','B',8),('search','A',16),('search','B',16)])
+        self.assertEqual(result['calls'], 9)
+        self.post.side_effect = None; self.post.return_value = {'data':{'objs':[dy(str(i)) for i in range(350)]}}
+        result = viral.preview(self.settings(['douyin'], douyin_sources=['search','lowfan']))
+        self.assertEqual(result['scanned'], 300)
+        self.assertEqual(result['calls'], 1)
+        self.assertTrue(result['coverage']['incomplete'])
 
     def route(self, path, payload):
         handler = main.Handler.__new__(main.Handler)
@@ -299,12 +466,12 @@ class ViralTests(unittest.TestCase):
         self.addCleanup(manager.shutdown)
         self.post.side_effect = None; self.post.return_value = {'data': {'data': {'objs': [dy()]}}}
         with patch.object(main, 'JOBS', manager), patch.object(store, 'save_item') as save:
-            handler = self.route('/api/viral/preview', {'platforms': ['douyin']})
+            handler = self.route('/api/viral/preview', {'platforms': ['douyin'], 'douyin_sources':['lowfan']})
             self.assertEqual(handler._json.call_args.kwargs['status'], 202)
             job = manager.get(handler._json.call_args.args[0]['job_id']); wait_for(job, timeout=3)
             self.assertEqual(job.state, 'done')
             self.assertEqual(len(job.to_dict()['viral']['candidates']), 1)
-            self.assertEqual([c.args[1]['page'] for c in self.post.call_args_list], [1, 2])
+            self.assertEqual([c.args[1]['page'] for c in self.post.call_args_list], [1])
             self.assertEqual(job.to_dict()['viral']['coverage']['max_pages'], 2)
             self.assertEqual(job.item_id, '')
             self.assertTrue(any(x['state'] == 'skipped' for x in job.stages))
