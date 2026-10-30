@@ -143,11 +143,19 @@
       <label><input id="viralShowPool" type="checkbox"> 看本批参考（含未达标与待核）</label>
       <p class="muted">严选、本档与待核均是本批参考的子集，计数不相加。缺粉或日期仅待核，不算过线。未知粉不会随拖条自动补查；更换平台或关键词后需点「重新查询」。窄屏可左右滑动表格。</p>
       <div class="viral-review-controls">
-        <label>排序 <select id="viralSort"><option value="multiplier">M 倍数从高到低</option><option value="interactions">互动数从高到低</option><option value="published_at">发布时间从新到旧</option><option value="fans">粉丝数从少到多</option></select></label>
+        <label>排序 <select id="viralSort"><option value="r">R 从高到低</option><option value="multiplier">M 倍数从高到低</option><option value="interactions">互动数从高到低</option><option value="published_at">发布时间从新到旧</option><option value="fans">粉丝数从少到多</option></select></label>
         <label>平台 <select id="viralGrouping"><option value="mixed">混排</option><option value="platform">按平台分组</option></select></label>
         <label><input id="viralShowIrrelevant" type="checkbox"> 显示不相关</label>
         <label><input id="viralShowBlocked" type="checkbox"> 显示屏蔽作者（可解除）</label>
       </div>
+      <div class="viral-review-controls">
+        <label>R 每作者最多页数 <select id="viralRPages"><option value="1">1 页</option><option value="2" selected>2 页</option><option value="3">3 页</option></select></label>
+        <label>R 每批调用上限 <input id="viralRBudget" type="number" min="1" max="20" value="20"></label>
+        <button id="viralRWorth" type="button" class="button secondary">给所有值得跟的算 R</button>
+      </div>
+      <p class="muted">R = 本条互动 ÷ 最近最多 20 条其它作品互动中位数。至少 5 条样本；24 小时内复用作者缓存。抖音按赞，小红书按赞+藏。只在点击确认后查询。</p>
+      <p id="viralRStatus" role="status" aria-live="polite"></p>
+      <div id="viralRConfirm" hidden><button id="viralRRun" type="button" class="button primary">确认计算 R</button> <button id="viralRCancel" type="button" class="quiet-link">取消</button></div>
       <p id="viralStorageStatus" class="muted" role="status"></p>
       <div id="viralGrid" class="viral-grid" role="list"></div>
       <div class="viral-save"><label><input type="checkbox" id="viralAll"> 全选未入库</label>
@@ -162,7 +170,7 @@
     </section>
   </main>
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-  <script src="/viral-filter.js?v=20261030-precision"></script>
-  <script src="/app.js?v=20261030-precision"></script>
+  <script src="/viral-filter.js?v=20261030-r"></script>
+  <script src="/app.js?v=20261030-r"></script>
 </body>
 </html>

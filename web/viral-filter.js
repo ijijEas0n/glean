@@ -37,7 +37,7 @@ const ViralFilter = (() => {
   }
   function sortRows(rows, sort = 'multiplier') {
     const ascending = sort === 'fans';
-    const value = row => sort === 'published_at' ? (row.age_days == null ? null : -row.age_days) : row[sort];
+    const value = row => sort === 'r' ? row.r?.value : sort === 'published_at' ? (row.age_days == null ? null : -row.age_days) : row[sort];
     return [...rows].sort((a, b) => {
       const x = value(a), y = value(b);
       if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1;

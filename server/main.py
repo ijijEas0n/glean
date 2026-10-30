@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 if __package__ in (None, ""):  # 允许 `python3 server/main.py` 直接启动
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from server import media, store, update_check, viral  # type: ignore
+    from server import media, store, update_check, viral, viral_r  # type: ignore
     from server.accounts import (add_account, cached_works, get_account,
                                  remove_account, summarize_all, update_account)
     from server.config import (BROWSER_UA, LIBRARY_ROOT, WEB_ROOT, aliyun_api_key,
@@ -37,7 +37,7 @@ if __package__ in (None, ""):  # 允许 `python3 server/main.py` 直接启动
     from server.tikhub import (TikHubError, account_state, detect_proxy, proxy_state)
     from server.tikhub import _build_opener as tikhub_opener
 else:
-    from . import media, store, update_check, viral
+    from . import media, store, update_check, viral, viral_r
     from .accounts import (add_account, cached_works, get_account,
                            remove_account, summarize_all, update_account)
     from .config import (BROWSER_UA, LIBRARY_ROOT, WEB_ROOT, aliyun_api_key,
@@ -228,6 +228,12 @@ class Handler(BaseHTTPRequestHandler):
             self._api_reveal(payload)
         elif path == "/api/viral/preview":
             self._api_viral_preview(payload)
+        elif path in ("/api/viral/r/estimate", "/api/viral/r"):
+            try:
+                result = viral_r.estimate(payload) if path.endswith('/estimate') else viral_r.execute(payload)
+                self._json({"ok": True, **result})
+            except (ValueError, OSError, TikHubError) as exc:
+                self._error(str(exc))
         elif path == "/api/viral/feedback":
             self._api_viral_feedback(payload)
         elif path == "/api/viral/save":

@@ -1014,6 +1014,7 @@ function bind() {
 // 最近一批预览保存在当前浏览器；审阅反馈保存在服务端本地 JSON。
 let viralRows = [], viralSelected = new Set(), viralBusy = false;
 let viralBatch = null, viralCustom = false, viralDirty = false;
+let viralRBusy = false, viralRPlan = null;
 let viralFeedback = {items: {}, authors: {}}, viralFeedbackBusy = false;
 const VIRAL_CACHE_KEY = 'glean.viral.preview.v1';
 const viralCacheControls = ['viralExclude', 'viralFilterCommerce', 'viralSort', 'viralGrouping',
@@ -1096,6 +1097,13 @@ function initViralControls() {
   for (const id of ['viralShowPool', 'viralFilterCommerce', 'viralSort', 'viralGrouping', 'viralShowIrrelevant', 'viralShowBlocked'])
     $(id).addEventListener('change', refilterViral);
   $('viralExclude').addEventListener('input', refilterViral);
+  for (const id of ['viralRPages', 'viralRBudget']) $(id).addEventListener('input', () => {
+    viralRPlan = null; $('viralRConfirm').hidden = true;
+    $('viralRStatus').textContent = 'R 页数或预算已修改，请重新点击算 R 查看预计调用。';
+  });
+  $('viralRWorth').addEventListener('click', () => prepareViralR(null));
+  $('viralRRun').addEventListener('click', runViralR);
+  $('viralRCancel').addEventListener('click', () => { viralRPlan = null; $('viralRConfirm').hidden = true; $('viralRStatus').textContent = '已取消，本次未查询 TikHub。'; });
   applyViralTier();
   restoreViral();
 }
@@ -1159,13 +1167,18 @@ function renderViral() {
       body.append(node('div', 'viral-card-meta', `${platformLabel(row.platform)} · ${row.author || '作者未知'} · ${{'douyin:search':'抖音搜索','douyin:lowfan':'抖音低粉榜','xiaohongshu:search':'小红书搜索'}[row.source] || '来源待核'}`));
       const mult = row.multiplier == null ? '倍待核' : `${Number(row.multiplier).toFixed(1)}×`;
       const age = row.age_days == null ? '日期待核' : `${Math.floor(row.age_days)}天前`;
-      body.append(node('div', 'viral-card-stats', `粉 ${row.fans ?? '待核'} · 互动 ${row.interactions ?? '待核'} · ${mult}`));
+      body.append(node('div', 'viral-card-stats', `粉 ${row.fans ?? '待核'} · 互动 ${row.interactions ?? '待核'} · M ${mult} · R ${row.r?.value == null ? '未评级' : Number(row.r.value).toFixed(2) + '×'}`));
       const level = row.passed ? (row.strict_pass ? '严选 · 本档' : '本档') : `${(row.fail_reasons || ['未达标']).slice(0, 2).join('、')}`;
       body.append(node('div', 'viral-card-meta', `${level} · ${age}`));
       if (row.review_reasons.length) body.append(node('div', 'viral-review-reason', row.review_reasons.join('、')));
       if (row.commerce.length) body.append(node('div', 'viral-review-reason', `疑似带货依据：${row.commerce.join('、')}（待人工确认）`));
       if (row.mark) body.append(node('div', 'viral-review-reason', `已标记：${row.mark}`));
+      if (row.r) body.append(node('div', 'viral-card-meta', `${row.r.grade} · 样本 ${row.r.samples} · 中位数 ${row.r.median ?? '未知'} · ${row.r.distribution}。${row.r.note}。${row.r.history_note} 获取于 ${new Date(row.r.fetched_at * 1000).toLocaleString()}${row.r.cache_hit ? '（缓存）' : ''}`));
       const actions = node('div', 'viral-card-actions');
+      const calc = node('button', 'quiet-link', row.r ? '重算 R（优先缓存）' : '算 R'); calc.type = 'button';
+      calc.disabled = viralBusy || viralRBusy;
+      calc.addEventListener('click', event => { event.stopPropagation(); prepareViralR(row); });
+      actions.append(calc);
       for (const mark of ['不相关', '值得跟']) {
         const button = node('button', 'quiet-link', row.mark === mark ? `取消${mark}` : mark); button.type = 'button';
         button.addEventListener('click', event => { event.stopPropagation(); setViralFeedback(row, 'item', row.mark === mark ? '' : mark); });
@@ -1199,14 +1212,16 @@ function renderViral() {
   $('viralAll').checked = fresh.length > 0 && fresh.every(x => viralSelected.has(x.key));
   $('viralAll').disabled = viralBusy || !fresh.length;
   $('viralSave').disabled = viralBusy || !viralSelected.size || viralSelected.size > 100;
-  $('viralSearch').disabled = viralBusy;
+  $('viralRWorth').disabled = viralRBusy || viralBusy;
+  $('viralRRun').disabled = viralRBusy;
+  $('viralSearch').disabled = viralBusy || viralRBusy;
   $('viralSearch').textContent = viralBatch ? '重新查询（消耗额度）' : '查询（消耗额度）';
   $('viralTier').disabled = viralBusy;
   $('viralThresholds').querySelectorAll('input').forEach(input => { input.disabled = viralBusy; });
   $('viralSave').textContent = viralSelected.size > 100 ? '每次最多入库100条，请减少勾选' : viralSelected.size ? `入库 ${viralSelected.size} 条` : '勾选后入库';
 }
 async function searchViral(event) {
-  event.preventDefault(); if (viralBusy) return;
+  event.preventDefault(); if (viralBusy || viralRBusy) return;
   const platforms = []; if ($('viralDouyin').checked) platforms.push('douyin'); if ($('viralXhs').checked) platforms.push('xiaohongshu');
   if (!platforms.length) { $('viralStatus').textContent = '请至少选择一个平台'; return; }
   const douyin_sources = [];
@@ -1218,6 +1233,7 @@ async function searchViral(event) {
   if (keywords.length > 20 || keywords.some(k => [...k].length > 80)) {
     $('viralStatus').textContent = '最多 20 个关键词，每个最多 80 字'; return;
   }
+  viralRPlan = null; $('viralRConfirm').hidden = true; $('viralRStatus').textContent = '';
   viralBusy = true; viralBatch = null; $('viralCounts').textContent = ''; viralRows = []; viralSelected.clear(); renderViral();
   $('viralStatus').textContent = '正在查询候选，可能需要几分钟…';
   try {
@@ -1234,6 +1250,33 @@ async function searchViral(event) {
       renderViral();
     });
   } catch (err) { viralBusy = false; renderViral(); $('viralStatus').textContent = err.message; }
+}
+async function prepareViralR(row) {
+  if (viralRBusy || viralBusy) return;
+  viralRPlan = null; $('viralRConfirm').hidden = true;
+  viralRBusy = true; renderViral();
+  try {
+    const plan = await api('/api/viral/r/estimate', {method: 'POST', body: {
+      items: row ? [row] : viralBatch?.pool || [], worth_only: !row,
+      pages: Number($('viralRPages').value || 2), budget: Number($('viralRBudget').value || 20)
+    }});
+    $('viralRStatus').textContent = `共 ${plan.authors} 位作者，${plan.cached_authors} 位有 24 小时内缓存；预计最多 ${plan.uncached_authors} 位未缓存作者 × ${plan.pages} 页 = ${plan.estimated_calls} 次 TikHub 调用，独立上限 ${plan.budget} 次（无自动重试）。${plan.missing.join('；')}${plan.over_budget ? ' 超出预算，请减少作者或页数。' : ''}`;
+    if (!plan.over_budget && plan.authors) { viralRPlan = plan; $('viralRConfirm').hidden = false; }
+  } catch (err) { $('viralRStatus').textContent = `R 估算失败：${err.message}`; }
+  finally { viralRBusy = false; renderViral(); }
+}
+async function runViralR() {
+  if (!viralRPlan || viralRBusy) return;
+  const plan = viralRPlan; viralRPlan = null; viralRBusy = true;
+  $('viralRConfirm').hidden = true; renderViral();
+  $('viralRStatus').textContent = '正在查询近作并计算 R…';
+  try {
+    const result = await api('/api/viral/r', {method: 'POST', body: {plan_id: plan.plan_id}, timeout: 1250000});
+    for (const row of viralBatch?.pool || []) if (result.results[row.key]) row.r = result.results[row.key];
+    refilterViral();
+    $('viralRStatus').textContent = `本次 TikHub 调用 ${result.calls} 次，已计算 ${Object.keys(result.results).length} 条。${Object.entries(result.errors).map(([author, error]) => `${author}：${error}`).join('；')}${result.uncomputed.length ? ' 未完成：' + result.uncomputed.join('、') : ''}${plan.missing.length ? '；' + plan.missing.join('；') : ''}`;
+  } catch (err) { $('viralRStatus').textContent = `R 计算失败：${err.message}；已完成作者的历史保存在本机，可再次点击复用缓存。`; }
+  finally { viralRBusy = false; renderViral(); }
 }
 function markViralLocal(row) {
   row.local = true; viralSelected.delete(row.key);
