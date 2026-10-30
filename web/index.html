@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#f7f7f5">
   <title>拾取 · 收集和阅读</title>
-  <link rel="stylesheet" href="/style.css?v=viral-depth-20261029">
+  <link rel="stylesheet" href="/style.css?v=viral-precision-20261030">
 </head>
 <body>
   <aside class="sidebar">
@@ -110,6 +110,9 @@
           <label><input id="viralXhs" type="checkbox" checked> 小红书（互动=点赞+收藏）</label></fieldset>
         <label for="viralKeywords">关键词（一次可贴一批，逗号或换行分隔，最多 20 个）</label>
         <textarea id="viralKeywords" rows="3" placeholder="例如：AI，科普&#10;效率工具（留空使用配置，默认 AI）"></textarea>
+        <label for="viralExclude">排除词（逗号或空格分隔，同批即时免费重筛）</label>
+        <input id="viralExclude" type="text" placeholder="例如：娱乐 游戏">
+        <label><input id="viralFilterCommerce" type="checkbox" checked> 分组疑似带货 / 软广（仅规则提示，可关闭）</label>
         <label for="viralSourceWindow">发布时间范围
           <select id="viralSourceWindow"><option value="7" selected>近 7 天</option><option value="180">近半年</option><option value="0">不限</option></select>
         </label>
@@ -139,6 +142,13 @@
       <p id="viralCounts" role="status" aria-live="polite"></p>
       <label><input id="viralShowPool" type="checkbox"> 看本批参考（含未达标与待核）</label>
       <p class="muted">严选、本档与待核均是本批参考的子集，计数不相加。缺粉或日期仅待核，不算过线。未知粉不会随拖条自动补查；更换平台或关键词后需点「重新查询」。窄屏可左右滑动表格。</p>
+      <div class="viral-review-controls">
+        <label>排序 <select id="viralSort"><option value="multiplier">M 倍数从高到低</option><option value="interactions">互动数从高到低</option><option value="published_at">发布时间从新到旧</option><option value="fans">粉丝数从少到多</option></select></label>
+        <label>平台 <select id="viralGrouping"><option value="mixed">混排</option><option value="platform">按平台分组</option></select></label>
+        <label><input id="viralShowIrrelevant" type="checkbox"> 显示不相关</label>
+        <label><input id="viralShowBlocked" type="checkbox"> 显示屏蔽作者（可解除）</label>
+      </div>
+      <p id="viralStorageStatus" class="muted" role="status"></p>
       <div id="viralGrid" class="viral-grid" role="list"></div>
       <div class="viral-save"><label><input type="checkbox" id="viralAll"> 全选未入库</label>
         <label><input type="checkbox" id="viralTranscribe"> 入库时转写（消耗转写额度）</label>
@@ -152,7 +162,7 @@
     </section>
   </main>
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-  <script src="/viral-filter.js?v=20261028-cover"></script>
-  <script src="/app.js?v=20261029-search"></script>
+  <script src="/viral-filter.js?v=20261030-precision"></script>
+  <script src="/app.js?v=20261030-precision"></script>
 </body>
 </html>

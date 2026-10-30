@@ -228,6 +228,8 @@ class Handler(BaseHTTPRequestHandler):
             self._api_reveal(payload)
         elif path == "/api/viral/preview":
             self._api_viral_preview(payload)
+        elif path == "/api/viral/feedback":
+            self._api_viral_feedback(payload)
         elif path == "/api/viral/save":
             self._api_viral_save(payload)
         elif path == "/api/preview":
@@ -303,6 +305,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._error("找不到这个账号", 404)
             else:
                 self._json({"ok": True, **result})
+            return
+        if path == "/api/viral/feedback":
+            self._api_viral_feedback()
             return
         if path == "/api/config":
             config = load_config()
@@ -521,6 +526,13 @@ class Handler(BaseHTTPRequestHandler):
             self._error(f"打不开访达：{exc}", 500)
             return
         self._json({"ok": True, "path": str(resolved), "opened": True})
+
+    def _api_viral_feedback(self, payload=None) -> None:
+        try:
+            value = viral.load_feedback() if payload is None else viral.save_feedback(payload)
+            self._json({"ok": True, "feedback": value})
+        except (ValueError, OSError) as exc:
+            self._error(str(exc))
 
     def _api_viral_preview(self, payload: dict[str, Any]) -> None:
         try:

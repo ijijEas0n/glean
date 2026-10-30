@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import json
 import math
+from pathlib import Path
+from threading import RLock
 import os
 import re
 from typing import Any
@@ -50,6 +53,61 @@ PRESETS = {
     "xiaohongshu": ((5000, 2000, 2, 7), (10000, 1000, 1, 14),
                     (10000, 500, 0.5, 14), (10000, 300, 0.1, 14), (30000, 100, 0.05, 30)),
 }
+
+
+# 只保存审阅反馈，不含平台响应或凭证。路径固定在仓库内。
+FEEDBACK_PATH = Path(__file__).resolve().parents[1] / "data" / "viral-feedback.json"
+_FEEDBACK_LOCK = RLock()
+
+
+def load_feedback() -> dict:
+    with _FEEDBACK_LOCK:
+        if not FEEDBACK_PATH.exists():
+            return {"items": {}, "authors": {}}
+        value = json.loads(FEEDBACK_PATH.read_text(encoding="utf-8"))
+        if not isinstance(value, dict) or any(not isinstance(value.get(k), dict) for k in ("items", "authors")):
+            raise ValueError("低粉候选反馈文件格式错误，请检查 data/viral-feedback.json")
+        return value
+
+
+def save_feedback(payload: dict) -> dict:
+    platform, biz = payload.get("platform"), payload.get("id")
+    kind, mark = payload.get("kind", "item"), payload.get("mark", "")
+    if platform not in PLATFORMS or not isinstance(biz, str) or not biz.strip() or len(biz) > 256:
+        raise ValueError("反馈的平台或 ID 无效")
+    if kind not in ("item", "author") or mark not in (("", "不相关", "值得跟") if kind == "item" else ("", "屏蔽")):
+        raise ValueError("反馈类型或标记无效")
+    key = f"{platform}:{biz}"
+    with _FEEDBACK_LOCK:
+        value = load_feedback()
+        group = value["items" if kind == "item" else "authors"]
+        if mark:
+            group[key] = mark
+        else:
+            group.pop(key, None)
+        FEEDBACK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temporary = FEEDBACK_PATH.with_suffix(".tmp")
+        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(FEEDBACK_PATH)
+        return value
+
+
+def local_fields(obj: dict) -> dict:
+    """只提取当前作品响应中已有的文本和标识，绝不补详情。"""
+    def text(value):
+        if isinstance(value, str):
+            return value[:12000]
+        if isinstance(value, list):
+            return " ".join(text(x) for x in value[:100])[:12000]
+        if isinstance(value, dict):
+            return " ".join(text(value.get(k)) for k in ("name", "title", "cha_name", "hashtag_name", "text"))[:12000]
+        return ""
+    # 非空对象/数组才算商品证据；false、0、空结构和字符串 0 不命中。
+    flags = [k for k in ("is_ads", "is_ad", "is_commerce", "ad_info", "promotion", "promotions", "product_info", "goods_info", "shopping_cart")
+             if obj.get(k) not in (None, False, 0, "", "0", "false", [], {})]
+    return {"description": " ".join(text(obj.get(k)) for k in ("desc", "description", "content"))[:12000],
+            "topics": " ".join(text(obj.get(k)) for k in ("text_extra", "cha_list", "hashtags", "tag_list", "topics"))[:12000],
+            "commerce_fields": flags}
 
 
 def preset(platform: str, tier: int) -> dict:
@@ -325,7 +383,7 @@ def normalize(platform: str, obj: dict) -> dict | None:
            else f"https://www.xiaohongshu.com/explore/{biz}")
     if platform == "xiaohongshu" and obj.get("xsec_token"):
         url += "?" + urlencode({"xsec_token": str(obj["xsec_token"]), "xsec_source": "pc_search"})
-    return {"platform": platform, "id": biz, "key": f"{platform}:{biz}",
+    return {**local_fields(obj), "platform": platform, "id": biz, "key": f"{platform}:{biz}",
             "url": url,
             "cover": cover_of(platform, obj),
             "title": str(next((obj[k] for k in ("item_title", "title", "display_title", "desc") if obj.get(k)), ""))[:500],
@@ -451,7 +509,12 @@ def preview(settings: dict, progress=None) -> dict:
                 item["raw"].update(fans_source=source, metrics_source=path, fetched_at=fetched_at, keyword=keyword,
                                    fans=source_fans, published_at=item["published_at"])
                 if item["key"] in originals:
-                    originals[item["key"]]["raw"].setdefault("alternatives", []).append(deepcopy(item["raw"]))
+                    original = originals[item["key"]]
+                    original["raw"].setdefault("alternatives", []).append(deepcopy(item["raw"]))
+                    for field in ("description", "topics"):
+                        if item[field] and item[field] not in original[field]:
+                            original[field] = (original[field] + " " + item[field])[:24000]
+                    original["commerce_fields"] = list(dict.fromkeys(original["commerce_fields"] + item["commerce_fields"]))
                 else:
                     originals[item["key"]] = item
                     pool.append(item)

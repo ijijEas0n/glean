@@ -391,7 +391,7 @@ class ViralTests(unittest.TestCase):
     def test_cross_source_keyword_conflicts_keep_first_metrics(self):
         def post(path, params):
             if 'billboard' in path:
-                return {'data': {'objs':[dy(like_cnt=1, fans_cnt=5)]}}
+                return {'data': {'objs':[dy(like_cnt=1, fans_cnt=5, desc='仅补充来源的广告说明', cha_list=[{'cha_name':'优惠'}], promotion={'id':'product'})]}}
             return {'data': {'business_data':[{'data': {'aweme_info': {
                 'aweme_id':'123', 'author':{'follower_count':1000},
                 'statistics':{'digg_count':10000}, 'create_time':NOW.timestamp()}}}],
@@ -405,6 +405,9 @@ class ViralTests(unittest.TestCase):
         self.assertEqual(row['raw']['metrics_source'], row['metrics_source'])
         self.assertEqual(len(row['raw']['alternatives']), 3)
         self.assertEqual(row['raw']['alternatives'][-1]['likes'], 1)
+        self.assertIn('仅补充来源的广告说明', row['description'])
+        self.assertIn('优惠', row['topics'])
+        self.assertEqual(row['commerce_fields'], ['promotion'])
         self.assertEqual(result['calls'], 4)
         self.assertEqual(result['coverage']['pages_by_source']['douyin:lowfan'], {'A':1,'B':1})
 

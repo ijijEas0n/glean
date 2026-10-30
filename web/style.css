@@ -54,3 +54,11 @@
 .viral-form textarea { width: 100%; min-width: 0; resize: vertical; padding: 12px; border: 1px solid var(--line); border-radius: 7px; }
 .viral-form select { max-width: 100%; padding: 6px; }
 #viralStatus { overflow-wrap: anywhere; }
+
+.viral-review-controls,.viral-card-actions{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.viral-review-controls select{max-width:100%;padding:6px}
+.viral-group-title{grid-column:1/-1;font-size:16px;margin:14px 0 0}
+.viral-grid .viral-review-reason{font-size:11px;line-height:1.5;color:#8b531c;overflow-wrap:anywhere;white-space:normal}
+.viral-card-actions{gap:8px;margin-top:6px}
+.viral-card-actions button{font-size:11px;white-space:normal;text-align:left}
+.viral-grid .preview-card.is-disabled{opacity:1}

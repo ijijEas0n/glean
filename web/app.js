@@ -963,7 +963,7 @@ function bind() {
   initViralControls();
   $('viralForm').addEventListener('submit', searchViral);
   $('viralSave').addEventListener('click', saveViral);
-  $('viralAll').addEventListener('change', () => { viralRows.filter(x => !x.local).forEach(x => { if ($('viralAll').checked) viralSelected.add(x.key); else viralSelected.delete(x.key); }); renderViral(); });
+  $('viralAll').addEventListener('change', () => { viralRows.filter(viralSelectable).forEach(x => { if ($('viralAll').checked) viralSelected.add(x.key); else viralSelected.delete(x.key); }); renderViral(); });
   $('collectForm').addEventListener('submit', submitCollect);
   $('urlInput').addEventListener('input', () => { invalidatePreview(); state.resolveSeq = (state.resolveSeq || 0) + 1; state.preview = null; state.previewLoading = false; state.profileMode = false; state.collectResolving = false; state.collectResolving = linksFrom($('urlInput').value).length > 0; $('inlinePreview').hidden = true; $('collectLower').hidden = false; $('previewShortcuts').hidden = true; syncCount(); scheduleInspect(); });
   $('urlInput').addEventListener('paste', () => setTimeout(scheduleInspect, 0));
@@ -1011,9 +1011,57 @@ function bind() {
   window.addEventListener('hashchange', setRoute);
 }
 
-// 低粉候选保留在当前页面内存；预览不会写成虚拟库条目。
+// 最近一批预览保存在当前浏览器；审阅反馈保存在服务端本地 JSON。
 let viralRows = [], viralSelected = new Set(), viralBusy = false;
 let viralBatch = null, viralCustom = false, viralDirty = false;
+let viralFeedback = {items: {}, authors: {}}, viralFeedbackBusy = false;
+const VIRAL_CACHE_KEY = 'glean.viral.preview.v1';
+const viralCacheControls = ['viralExclude', 'viralFilterCommerce', 'viralSort', 'viralGrouping',
+  'viralShowIrrelevant', 'viralShowBlocked', 'viralShowPool', 'viralKeywords', 'viralSourceWindow',
+  'viralMaxPages', 'viralSearchSource', 'viralLowfanSource', 'viralDouyin', 'viralXhs', 'viralTier'];
+function cacheViral() {
+  if (!viralBatch?.pool) return;
+  try {
+    const controls = Object.fromEntries(viralCacheControls.map(id => [id, {value: $(id).value, checked: $(id).checked}]));
+    localStorage.setItem(VIRAL_CACHE_KEY, JSON.stringify({version: 1, batch: viralBatch, controls, rules: viralRules(), custom: viralCustom}));
+    $('viralStorageStatus').textContent = '已保存本批预览；刷新后可继续免费筛选。反馈保存在本机 data/viral-feedback.json。';
+  } catch {
+    $('viralStorageStatus').textContent = '浏览器无法保存预览（空间不足或存储被禁用），刷新可能丢失本批；反馈仍单独保存。';
+  }
+}
+function restoreViral() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(VIRAL_CACHE_KEY) || 'null');
+    if (!cached || cached.version !== 1 || !Array.isArray(cached.batch?.pool)) return;
+    if (cached.batch.pool.some(row => !row || !['douyin', 'xiaohongshu'].includes(row.platform))) throw Error('缓存作品格式错误');
+    if (!['douyin', 'xiaohongshu'].every(p => ViralFilter.keys.every(k =>
+      Number.isFinite(Number(cached.rules?.[p]?.[k])) && Number(cached.rules[p][k]) >= 0))) throw Error('缓存门槛格式错误');
+    for (const [id, value] of Object.entries(cached.controls || {})) {
+      if (!viralCacheControls.includes(id)) continue;
+      $(id).value = value.value; $(id).checked = value.checked;
+    }
+    for (const p of ['douyin', 'xiaohongshu']) for (const k of ViralFilter.keys)
+      $(viralInputId(p, k)).value = cached.rules[p][k];
+    viralCustom = !!cached.custom; viralDirty = true; viralBatch = cached.batch;
+    updateViralLabel(); refilterViral();
+  } catch { viralBatch = null; viralRows = []; $('viralStorageStatus').textContent = '最近预览无法恢复，请重新查询。'; }
+}
+async function loadViralFeedback() {
+  try { viralFeedback = (await api('/api/viral/feedback')).feedback; refilterViral(); }
+  catch (err) { $('viralStorageStatus').textContent = `读取反馈失败：${err.message}`; }
+}
+async function setViralFeedback(row, kind, mark) {
+  if (viralFeedbackBusy) return;
+  viralFeedbackBusy = true;
+  try {
+    viralFeedback = (await api('/api/viral/feedback', {method: 'POST', body: {
+      platform: row.platform, id: kind === 'author' ? row.author_id : row.id, kind, mark
+    }})).feedback;
+    refilterViral();
+  } catch (err) { $('viralStorageStatus').textContent = `保存反馈失败：${err.message}；本次标记未保存。`; }
+  finally { viralFeedbackBusy = false; }
+}
+const viralSelectable = row => !row.local && row.group !== '已排除';
 const viralInputId = (p, k) => `viral-${p}-${k}`;
 function viralRules() {
   return Object.fromEntries(['douyin', 'xiaohongshu'].map(p => [p,
@@ -1045,8 +1093,11 @@ function initViralControls() {
   }
   for (const id of ['viralKeywords', 'viralSourceWindow', 'viralMaxPages', 'viralSearchSource', 'viralLowfanSource']) $(id).addEventListener('input', () => { viralDirty = true; });
   $('viralTier').addEventListener('input', () => { viralDirty = true; applyViralTier(); });
-  $('viralShowPool').addEventListener('change', refilterViral);
+  for (const id of ['viralShowPool', 'viralFilterCommerce', 'viralSort', 'viralGrouping', 'viralShowIrrelevant', 'viralShowBlocked'])
+    $(id).addEventListener('change', refilterViral);
+  $('viralExclude').addEventListener('input', refilterViral);
   applyViralTier();
+  restoreViral();
 }
 function refilterViral() {
   if (!viralBatch) return;
@@ -1063,11 +1114,11 @@ function refilterViral() {
   const pool = viralBatch.pool.map(row => {
     const scored = ViralFilter.score(row, withinRange(rules[row.platform]));
     scored.strict_pass = ViralFilter.score(row, withinRange(ViralFilter.preset(row.platform, 1))).passed;
-    return scored;
+    return ViralFilter.classify(scored, {exclude: $('viralExclude').value, filterCommerce: $('viralFilterCommerce').checked}, viralFeedback);
   });
-  const count = pool.filter(x => x.passed).length;
+  const count = pool.filter(x => x.passed && x.group === '候选' && x.mark !== '不相关').length;
   const pending = pool.filter(x => x.pending).length;
-  $('viralCounts').textContent = `严选 ${pool.filter(x => x.strict_pass).length} · 本档 ${count} · 本批参考 ${pool.length} · 待核 ${pending}`;
+  $('viralCounts').textContent = `严选 ${pool.filter(x => x.strict_pass && x.group === '候选' && x.mark !== '不相关').length} · 本档 ${count} · 本批参考 ${pool.length} · 待核 ${pending} · 疑似带货 ${pool.filter(x => x.group === '疑似带货').length} · 已排除 ${pool.filter(x => x.group === '已排除').length} · 不相关 ${pool.filter(x => x.mark === '不相关').length}`;
   const coverage = viralBatch.coverage || {};
   const sources = Object.entries(coverage.keywords || {}).map(([p, words]) => {
     const pages = coverage.pages_by_keyword?.[p] || {};
@@ -1077,52 +1128,74 @@ function refilterViral() {
   const base = `${sources ? sources + '。' : ''}发布时间范围：${rangeLabel}。${coverage.douyin_sources?.includes('lowfan') ? '低粉榜固定 168 小时，每词 1 页。' : ''}每词最多 ${coverage.max_pages || 1} 页，扫描 ${viralBatch.scanned || 0} 条，可识别去重 ${pool.length} 条，TikHub 调用 ${viralBatch.calls || 0} 次（含补粉，重试另计）。同批重筛不消耗查询额度。`;
   $('viralStatus').textContent = base + (count ? '' : ' 当前档没有候选，可往宽松拖或看本批参考；不能据此判断关键词没有好内容。')
     + (viralBatch.coverage?.incomplete ? ' 覆盖不全，结果未完整核对。' : '') + (viralBatch.warnings || []).join('；');
-  viralRows = pool.filter(x => $('viralShowPool').checked || x.passed)
-    .sort((a, b) => $('viralShowPool').checked ? (b.interactions ?? -1) - (a.interactions ?? -1) : b.multiplier - a.multiplier);
-  const visible = new Set(viralRows.map(x => x.key));
+  viralRows = ViralFilter.sortRows(pool.filter(x =>
+    (!x.blocked || $('viralShowBlocked').checked) && (x.mark !== '不相关' || $('viralShowIrrelevant').checked) &&
+    ($('viralShowPool').checked || x.passed || x.group !== '候选')), $('viralSort').value || 'multiplier');
+  const visible = new Set(viralRows.filter(viralSelectable).map(x => x.key));
   viralSelected = new Set([...viralSelected].filter(k => visible.has(k)));
+  cacheViral();
   renderViral();
 }
 function renderViral() {
   const grid = $('viralGrid'); grid.replaceChildren();
-  for (const row of viralRows) {
-    const selected = viralSelected.has(row.key);
-    const card = node('button', `preview-card${selected ? ' is-selected' : ''}${row.local || viralBusy ? ' is-disabled' : ''}`);
-    card.type = 'button'; card.setAttribute('role', 'listitem');
-    card.setAttribute('aria-pressed', selected ? 'true' : 'false');
-    card.setAttribute('aria-label', `${selected ? '取消选择' : '选择'} ${row.title || row.id}`);
-    if (row.cover) {
-      const img = node('img', 'preview-cover'); img.loading = 'lazy'; img.alt = '';
-      img.src = coverUrl(row.cover, row.url || 'https://www.douyin.com/');
-      img.addEventListener('error', () => { img.replaceWith(node('div', 'preview-cover cover-empty')); }, { once: true });
-      card.append(img);
-    } else card.append(node('div', 'preview-cover cover-empty'));
-    const check = node('span', 'card-check', selected ? '✓' : '');
-    card.append(check);
-    if (row.local) card.append(node('span', 'saved-mark', '已入库'));
-    const body = node('div', 'viral-card-body');
-    body.append(node('div', 'viral-card-title', row.title || '（无标题）'));
-    body.append(node('div', 'viral-card-meta', `${platformLabel(row.platform)} · ${row.author || '作者未知'} · ${{'douyin:search':'抖音搜索','douyin:lowfan':'抖音低粉榜','xiaohongshu:search':'小红书搜索'}[row.source] || '来源待核'}`));
-    const mult = row.multiplier == null ? '倍待核' : `${Number(row.multiplier).toFixed(1)}×`;
-    const age = row.age_days == null ? '日期待核' : `${Math.floor(row.age_days)}天前`;
-    body.append(node('div', 'viral-card-stats', `粉 ${row.fans ?? '待核'} · 互动 ${row.interactions ?? '待核'} · ${mult}`));
-    const level = row.passed ? (row.strict_pass ? '严选 · 本档' : '本档') : `${(row.fail_reasons || ['未达标']).slice(0, 2).join('、')}`;
-    body.append(node('div', 'viral-card-meta', `${level} · ${age}`));
-    if (row.url) {
-      const open = node('a', 'viral-open', '打开原页'); open.href = row.url; open.target = '_blank'; open.rel = 'noreferrer';
-      open.addEventListener('click', event => event.stopPropagation());
-      body.append(open);
+  const sections = ViralFilter.sections(viralRows, $('viralGrouping').value === 'platform');
+  for (const section of sections) {
+    grid.append(node('h2', 'viral-group-title', `${section.group}${section.platform ? ' · ' + platformLabel(section.platform) : ''}（${section.items.length}）`));
+    for (const row of section.items) {
+      const selected = viralSelected.has(row.key);
+      const card = node('article', `preview-card${selected ? ' is-selected' : ''}${!viralSelectable(row) || viralBusy ? ' is-disabled' : ''}`);
+      card.setAttribute('role', 'listitem');
+      if (row.cover) {
+        const img = node('img', 'preview-cover'); img.loading = 'lazy'; img.alt = '';
+        img.src = coverUrl(row.cover, row.url || 'https://www.douyin.com/');
+        img.addEventListener('error', () => { img.replaceWith(node('div', 'preview-cover cover-empty')); }, { once: true });
+        card.append(img);
+      } else card.append(node('div', 'preview-cover cover-empty'));
+      const check = node('span', 'card-check', selected ? '✓' : '');
+      card.append(check);
+      if (row.local) card.append(node('span', 'saved-mark', '已入库'));
+      const body = node('div', 'viral-card-body');
+      body.append(node('div', 'viral-card-title', row.title || '（无标题）'));
+      body.append(node('div', 'viral-card-meta', `${platformLabel(row.platform)} · ${row.author || '作者未知'} · ${{'douyin:search':'抖音搜索','douyin:lowfan':'抖音低粉榜','xiaohongshu:search':'小红书搜索'}[row.source] || '来源待核'}`));
+      const mult = row.multiplier == null ? '倍待核' : `${Number(row.multiplier).toFixed(1)}×`;
+      const age = row.age_days == null ? '日期待核' : `${Math.floor(row.age_days)}天前`;
+      body.append(node('div', 'viral-card-stats', `粉 ${row.fans ?? '待核'} · 互动 ${row.interactions ?? '待核'} · ${mult}`));
+      const level = row.passed ? (row.strict_pass ? '严选 · 本档' : '本档') : `${(row.fail_reasons || ['未达标']).slice(0, 2).join('、')}`;
+      body.append(node('div', 'viral-card-meta', `${level} · ${age}`));
+      if (row.review_reasons.length) body.append(node('div', 'viral-review-reason', row.review_reasons.join('、')));
+      if (row.commerce.length) body.append(node('div', 'viral-review-reason', `疑似带货依据：${row.commerce.join('、')}（待人工确认）`));
+      if (row.mark) body.append(node('div', 'viral-review-reason', `已标记：${row.mark}`));
+      const actions = node('div', 'viral-card-actions');
+      for (const mark of ['不相关', '值得跟']) {
+        const button = node('button', 'quiet-link', row.mark === mark ? `取消${mark}` : mark); button.type = 'button';
+        button.addEventListener('click', event => { event.stopPropagation(); setViralFeedback(row, 'item', row.mark === mark ? '' : mark); });
+        actions.append(button);
+      }
+      if (row.author_id) {
+        const block = node('button', 'quiet-link', row.blocked ? '解除屏蔽作者' : '屏蔽作者'); block.type = 'button';
+        block.addEventListener('click', event => { event.stopPropagation(); setViralFeedback(row, 'author', row.blocked ? '' : '屏蔽'); });
+        actions.append(block);
+      }
+      const select = node('button', 'quiet-link', selected ? '取消选择' : '选择入库'); select.type = 'button';
+      select.disabled = !viralSelectable(row) || viralBusy; select.setAttribute('aria-pressed', String(selected));
+      select.addEventListener('click', event => { event.stopPropagation(); if (viralSelected.has(row.key)) viralSelected.delete(row.key); else viralSelected.add(row.key); renderViral(); });
+      actions.append(select); body.append(actions);
+      if (row.url) {
+        const open = node('a', 'viral-open', '打开原页'); open.href = row.url; open.target = '_blank'; open.rel = 'noreferrer';
+        open.addEventListener('click', event => event.stopPropagation());
+        body.append(open);
+      }
+      card.append(body);
+      if (viralSelectable(row) && !viralBusy) {
+        card.addEventListener('click', () => {
+          if (viralSelected.has(row.key)) viralSelected.delete(row.key); else viralSelected.add(row.key);
+          renderViral();
+        });
+      }
+      grid.append(card);
     }
-    card.append(body);
-    if (!row.local && !viralBusy) {
-      card.addEventListener('click', () => {
-        if (viralSelected.has(row.key)) viralSelected.delete(row.key); else viralSelected.add(row.key);
-        renderViral();
-      });
-    }
-    grid.append(card);
   }
-  const fresh = viralRows.filter(x => !x.local);
+  const fresh = viralRows.filter(viralSelectable);
   $('viralAll').checked = fresh.length > 0 && fresh.every(x => viralSelected.has(x.key));
   $('viralAll').disabled = viralBusy || !fresh.length;
   $('viralSave').disabled = viralBusy || !viralSelected.size || viralSelected.size > 100;
@@ -1166,10 +1239,11 @@ function markViralLocal(row) {
   row.local = true; viralSelected.delete(row.key);
   const original = viralBatch?.pool?.find(x => x.key === row.key);
   if (original) original.local = true;
+  cacheViral();
 }
 async function saveViral() {
   if (viralBusy) return;
-  const selected = viralRows.filter(x => viralSelected.has(x.key) && !x.local);
+  const selected = viralRows.filter(x => viralSelected.has(x.key) && viralSelectable(x));
   if (!selected.length || selected.length > 100) return;
   viralBusy = true; renderViral();
   try {
@@ -1193,6 +1267,7 @@ async function saveViral() {
 }
 
 bind();
+loadViralFeedback();
 showPage('collect');
 syncCount();
 loadCollectDefaults();
