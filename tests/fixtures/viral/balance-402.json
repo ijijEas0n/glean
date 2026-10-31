@@ -1,0 +1,7 @@
+{
+  "detail": {
+    "code": 402,
+    "message": "Insufficient balance, this endpoint requires payment and does not accept free credit, to top up balance or get free credit, go: https://user.tikhub.io/users/add_credit",
+    "message_zh": "免费额度以及余额不足，此路由需要付费，并且不接受使用免费额度请求，前往充值或获取免费额度：https://user.tikhub.io/users/add_credit"
+  }
+}

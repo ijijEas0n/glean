@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#f7f7f5">
   <title>拾取 · 收集和阅读</title>
-  <link rel="stylesheet" href="/style.css?v=20261016b">
+  <link rel="stylesheet" href="/style.css?v=viral-simple-20261031">
 </head>
 <body>
   <aside class="sidebar">
@@ -23,6 +23,7 @@
   <main class="main" id="main">
     <section class="page collect-page" id="pageCollect" hidden>
       <h1>收集</h1>
+      <p><a href="#/viral" class="quiet-link">低粉爆款 →</a></p>
       <form id="collectForm" class="collect-box">
         <textarea id="urlInput" rows="3" placeholder="粘贴链接" spellcheck="false"></textarea>
         <div class="collect-meta" id="collectMeta" hidden></div>
@@ -101,6 +102,55 @@
       </div>
     </section>
 
+    <section class="page" id="pageViral" hidden>
+      <h1>低粉爆款</h1>
+      <p class="muted">先看结论和原因，勾选后入库。候选筛选，非流量预测。</p>
+      <form id="viralForm" class="viral-form">
+        <label for="viralKeywords">关键词（逗号或换行分隔，最多 20 个）</label>
+        <textarea id="viralKeywords" rows="2" placeholder="例如：AI，科普（留空默认 AI）"></textarea>
+        <fieldset><legend>平台</legend><label><input id="viralDouyin" type="checkbox" checked> 抖音</label>
+          <label><input id="viralXhs" type="checkbox" checked> 小红书</label></fieldset>
+        <div class="viral-slider">
+          <label for="viralTier">筛选松紧 <strong id="viralTierName">宽松</strong></label>
+          <input id="viralTier" type="range" min="0" max="4" step="1" value="3" aria-valuetext="宽松">
+          <div class="viral-ticks" aria-hidden="true"><span>最严</span><span>较严</span><span>适中</span><span>宽松</span><span>最松</span></div>
+        </div>
+        <button class="button primary" id="viralSearch" type="submit">查询（消耗额度）</button>
+        <details id="viralAdvanced" class="viral-advanced"><summary>高级设置</summary>
+          <div class="viral-advanced-body">
+            <label for="viralExclude">排除词（逗号或空格分隔，同批免费重筛）</label>
+            <input id="viralExclude" type="text" placeholder="例如：娱乐 游戏">
+            <label><input id="viralFilterCommerce" type="checkbox" checked> 疑似带货归入跳过（仅规则提示，可关闭）</label>
+            <label>发布时间范围 <select id="viralSourceWindow"><option value="7" selected>近 7 天</option><option value="180">近半年</option><option value="0">不限</option></select></label>
+            <fieldset><legend>抖音来源</legend>
+              <label><input id="viralSearchSource" type="checkbox" checked> 抖音搜索（最多赞）</label>
+              <label><input id="viralLowfanSource" type="checkbox" checked> 低粉榜（补充）</label>
+            </fieldset>
+            <label>每平台每关键词搜索最多翻页 <select id="viralMaxPages"><option value="1">1 页</option><option value="2" selected>2 页</option><option value="3">3 页</option></select></label>
+            <p class="muted">两平台互动均为赞+收藏，抖音收藏缺失按 0 并注明。低粉榜固定 168 小时、每词 1 页。有效天数取查询范围与本地天数较小者。拖条免费重筛，不自动补粉。</p>
+            <details><summary>高级门槛</summary><p class="muted">手改后显示「自定义」；再次拖条覆盖两平台数字。</p><div id="viralThresholds"></div></details>
+            <label>排序 <select id="viralSort"><option value="r">R 优先，再按互动</option><option value="multiplier">M 倍数从高到低</option><option value="interactions">互动数从高到低</option><option value="published_at">发布时间从新到旧</option><option value="fans">粉丝数从少到多</option></select></label>
+            <label>分组内平台 <select id="viralGrouping"><option value="mixed">混排</option><option value="platform">按平台分组</option></select></label>
+            <label>R 每作者最多页数 <select id="viralRPages"><option value="1">1 页</option><option value="2" selected>2 页</option><option value="3">3 页</option></select></label>
+            <label>R 每批调用上限 <input id="viralRBudget" type="number" min="1" max="20" value="20"></label>
+            <button id="viralRWorth" type="button" class="button secondary">给所有手动标记值得跟的算 R</button>
+            <p class="muted">R = 本条互动 ÷ 作者最近最多 20 条其它作品互动中位数，至少 5 条样本。作者缓存复用 24 小时。只在确认后查询；单卡也可按需算 R。</p>
+            <p class="muted">查询默认最多 24 次逻辑调用（重试另计）、扫描 300 条，不下载媒体。R 使用独立预算。先覆盖各词首屏，再翻页、补粉。</p>
+            <a href="#/settings" class="quiet-link">配置 TikHub</a>
+          </div>
+        </details>
+      </form>
+      <p id="viralStatus" role="status" aria-live="polite"></p>
+      <p id="viralCounts" role="status" aria-live="polite"></p>
+      <p id="viralRStatus" role="status" aria-live="polite"></p>
+      <div id="viralRConfirm" hidden><button id="viralRRun" type="button" class="button primary">确认计算 R</button> <button id="viralRCancel" type="button" class="quiet-link">取消</button></div>
+      <p id="viralStorageStatus" class="muted" role="status"></p>
+      <div id="viralGrid" class="viral-grid" role="list"></div>
+      <div class="viral-save"><label><input type="checkbox" id="viralAll"> 全选未入库</label>
+        <label><input type="checkbox" id="viralTranscribe"> 入库时转写（消耗转写额度）</label>
+        <button class="button primary" id="viralSave" type="button" disabled>勾选后入库</button></div>
+    </section>
+
     <section class="page detail-page" id="pageDetail" hidden>
       <div class="detail-toolbar"><button class="quiet-link" id="detailBack">← 内容库</button><span></span><button class="button primary" id="copyOne">复制给 AI</button><div class="gear-wrap"><button class="button secondary" id="detailMore">⋯</button><div class="popover detail-menu" id="detailMenu" hidden><button data-action="text">复制正文</button><button data-action="transcript">复制文字稿</button><a id="originLink" target="_blank" rel="noreferrer">打开原链接</a><button data-action="folder">打开文件夹</button><button data-action="raw">接口原始记录</button></div></div></div>
       <article class="detail-content"><h1 id="detailTitle"></h1><div id="detailBy" class="detail-by"></div>
@@ -108,6 +158,7 @@
     </section>
   </main>
   <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-  <script src="/app.js?v=20261028"></script>
+  <script src="/viral-filter.js?v=20261031-simple"></script>
+  <script src="/app.js?v=20261031-simple"></script>
 </body>
 </html>

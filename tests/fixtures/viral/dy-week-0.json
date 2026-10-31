@@ -1,0 +1,105 @@
+{
+  "code": 200,
+  "data": {
+    "business_data": [
+      {
+        "type": 1,
+        "data": {
+          "aweme_info": {
+            "aweme_id": "7700100140329143587",
+            "desc": "零基础自学 AI：我的信息来源和实践方法 #ai新星计划 #抖音前沿科技首发计划 #codex #抖音精选app知识充电站",
+            "item_title": "零基础自学 AI：我的信息来源和实践方法",
+            "create_time": 1792842600,
+            "author": {
+              "uid": "109721859448",
+              "sec_uid": "MS4wLjABAAAAU1qnsAUeu7SlYEnQ0b6I2iaB7r7vn4otBjfjdwp7Lyc",
+              "nickname": "一只桌子",
+              "follower_count": 8580
+            },
+            "statistics": {
+              "digg_count": 3611,
+              "collect_count": 2548
+            }
+          }
+        }
+      },
+      {
+        "type": 1,
+        "data": {
+          "aweme_info": {
+            "aweme_id": "7700594944151374961",
+            "desc": "三招硬控AI 视频场景一致性 为什么你的 AI 视频一换机位，场景就穿帮失控？这期就用 3 个方法教你硬控 AI 场景一致性，减少抽卡：俯视布局图锁定空间结构，720°全景图快速出多角度，3D 世界模型自由调度复杂运镜，场景一次建好反复用！#AI视频 #AI视频教学 #AIGC #ai新星计划 #AI创作浪潮计划",
+            "item_title": "三招硬控AI 视频场景一致性",
+            "create_time": 1792934477,
+            "author": {
+              "uid": "241510522037368",
+              "sec_uid": "MS4wLjABAAAAyi85GGeS9GCLBpS4JAJ-r4Kz0cPVz-b0wIiYaeg_icU",
+              "nickname": "李一帆",
+              "follower_count": 384529
+            },
+            "statistics": {
+              "digg_count": 2687,
+              "collect_count": 2425
+            }
+          }
+        }
+      },
+      {
+        "type": 1,
+        "data": {
+          "aweme_info": {
+            "aweme_id": "7700910866660740378",
+            "desc": "AI大模型基础知识全解析·下集 #大模型#Agent#人工智能#大模型开发#AI",
+            "item_title": "AI大模型基础知识全解析·下集",
+            "create_time": 1793008039,
+            "author": {
+              "uid": "7690508455735837753",
+              "sec_uid": "MS4wLjABAAAAgRnwRtay-VOzgeV_mPCaPI6LfJ0nkVjuxdgSw8cINpmVf-ycIk8Xotzqol22oE15",
+              "nickname": "文哲技术工坊",
+              "follower_count": 159
+            },
+            "statistics": {
+              "digg_count": 152,
+              "collect_count": 197
+            }
+          }
+        }
+      },
+      {
+        "type": 1,
+        "data": {
+          "aweme_info": {
+            "aweme_id": "7701233695352540451",
+            "desc": "90%的人AI都选错了 盘点各领域最能打AI工具#AI工具 #ai工具测评 #数码科技 #打工人必备的办公神器",
+            "item_title": "",
+            "create_time": 1793095800,
+            "author": {
+              "uid": "4162084580368059",
+              "sec_uid": "MS4wLjABAAAAhnuyT9jro4hhgbRuVWsAUVW4xR2nLhocjcKGpeZuGUoaDts4w5KIVDlrJhl-Q5mD",
+              "nickname": "数码保姆小何",
+              "follower_count": 5992
+            },
+            "statistics": {
+              "digg_count": 100,
+              "collect_count": 68
+            }
+          }
+        }
+      },
+      {
+        "type": 66668,
+        "data": {
+          "type": 6
+        }
+      }
+    ],
+    "business_config": {
+      "has_more": 0,
+      "backtrace": "w8KOvPTzjA32DWEYf/cuFV7ZLZm2+yr8PxDj5Bb5vbow/4Z2+QjZy2/IQ4VISxDROYXFg1wWrJ6KOSLiS5SsSw==",
+      "next_page": {
+        "cursor": 8,
+        "search_id": "202610291650215024CADE5F78769E6DED"
+      }
+    }
+  }
+}

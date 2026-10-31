@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 if __package__ in (None, ""):  # 允许 `python3 server/main.py` 直接启动
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from server import media, store, update_check  # type: ignore
+    from server import media, store, update_check, viral, viral_r  # type: ignore
     from server.accounts import (add_account, cached_works, get_account,
                                  remove_account, summarize_all, update_account)
     from server.config import (BROWSER_UA, LIBRARY_ROOT, WEB_ROOT, aliyun_api_key,
@@ -37,7 +37,7 @@ if __package__ in (None, ""):  # 允许 `python3 server/main.py` 直接启动
     from server.tikhub import (TikHubError, account_state, detect_proxy, proxy_state)
     from server.tikhub import _build_opener as tikhub_opener
 else:
-    from . import media, store, update_check
+    from . import media, store, update_check, viral, viral_r
     from .accounts import (add_account, cached_works, get_account,
                            remove_account, summarize_all, update_account)
     from .config import (BROWSER_UA, LIBRARY_ROOT, WEB_ROOT, aliyun_api_key,
@@ -226,6 +226,18 @@ class Handler(BaseHTTPRequestHandler):
             self._api_resolve(payload)
         elif path == "/api/reveal":
             self._api_reveal(payload)
+        elif path == "/api/viral/preview":
+            self._api_viral_preview(payload)
+        elif path in ("/api/viral/r/estimate", "/api/viral/r"):
+            try:
+                result = viral_r.estimate(payload) if path.endswith('/estimate') else viral_r.execute(payload)
+                self._json({"ok": True, **result})
+            except (ValueError, OSError, TikHubError) as exc:
+                self._error(str(exc))
+        elif path == "/api/viral/feedback":
+            self._api_viral_feedback(payload)
+        elif path == "/api/viral/save":
+            self._api_viral_save(payload)
         elif path == "/api/preview":
             self._api_preview(payload)
         elif path == "/api/jobs":
@@ -299,6 +311,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._error("找不到这个账号", 404)
             else:
                 self._json({"ok": True, **result})
+            return
+        if path == "/api/viral/feedback":
+            self._api_viral_feedback()
             return
         if path == "/api/config":
             config = load_config()
@@ -517,6 +532,44 @@ class Handler(BaseHTTPRequestHandler):
             self._error(f"打不开访达：{exc}", 500)
             return
         self._json({"ok": True, "path": str(resolved), "opened": True})
+
+    def _api_viral_feedback(self, payload=None) -> None:
+        try:
+            value = viral.load_feedback() if payload is None else viral.save_feedback(payload)
+            self._json({"ok": True, "feedback": value})
+        except (ValueError, OSError) as exc:
+            self._error(str(exc))
+
+    def _api_viral_preview(self, payload: dict[str, Any]) -> None:
+        try:
+            settings = viral.prepare(payload)
+        except (ValueError, TikHubError) as exc:
+            self._error(str(exc))
+            return
+        job = JOBS.create("viral:preview", settings, mode="viral_preview")
+        self._json({"ok": True, "job_id": job.id, "mode": "viral_preview"}, status=202)
+
+    def _api_viral_save(self, payload: dict[str, Any]) -> None:
+        try:
+            items, existing = viral.selected_items(payload)
+            options = payload.get("options", {})
+            if not isinstance(options, dict):
+                raise ValueError("options 必须是对象")
+            for key in ("download_media", "transcribe"):
+                if key in options and not isinstance(options[key], bool):
+                    raise ValueError(f"{key} 必须是布尔值")
+        except (ValueError, TikHubError) as exc:
+            self._error(str(exc))
+            return
+        if not items:
+            self._json({"ok": True, "job_id": None, "count": 0, "existing": existing})
+            return
+        # 保存走原有批次管线；默认只下载，转写必须由用户显式开启。
+        merged = self._merge_options({**options, "transcribe": options.get("transcribe", False)})
+        merged["skip_existing"] = True
+        job = JOBS.create_batch(items, merged)
+        self._json({"ok": True, "job_id": job.id, "mode": "batch",
+                    "count": len(items), "existing": existing}, status=202)
 
     def _api_preview(self, payload: dict[str, Any]) -> None:
         """博主主页第一步：只拉作品清单（封面/标题/时长/数据），不下载不转写。"""
