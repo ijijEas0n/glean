@@ -1,0 +1,208 @@
+// 禁网 DOM 桩：执行真实页面事件绑定，验证拖条/手改/参考视图均不发请求。
+const fs = require('fs');
+const vm = require('vm');
+const assert = require('assert/strict');
+const elements = new Map();
+class Element {
+  constructor(tag) { this.tag = tag; this.children = []; this.events = {}; this.value = ''; this.checked = false; }
+  set id(v) { this._id = v; elements.set(v, this); }
+  get id() { return this._id; }
+  append(...items) { this.children.push(...items); }
+  replaceChildren(...items) { this.children = items; }
+  setAttribute(k, v) { this[k] = v; }
+  addEventListener(k, fn) { this.events[k] = fn; }
+  querySelectorAll(tag) { return this.children.filter(x => typeof x === 'object').flatMap(x => [...(x.tag === tag ? [x] : []), ...x.querySelectorAll(tag)]); }
+  checkValidity() { return [...elements.values()].filter(x => x.id?.startsWith('viral-')).every(x => x.value !== '' && Number.isFinite(Number(x.value)) && Number(x.value) >= 0); }
+}
+for (const id of fs.readFileSync('web/index.html', 'utf8').matchAll(/id="([^"]+)"/g)) {
+  const e = new Element('div'); e.id = id[1];
+}
+elements.get('viralTier').value = '3';
+elements.get('viralFilterCommerce').checked = true;
+elements.get('viralSort').value = 'r';
+const storage = new Map();
+const localStorage = {getItem: k => storage.get(k) || null, setItem: (k, v) => storage.set(k, v)};
+let requests = 0;
+const context = vm.createContext({ document: {getElementById: id => elements.get(id), createElement: tag => new Element(tag)},
+  fetch: () => { requests++; throw new Error('禁止网络'); }, console, localStorage, URL, Set, Map, AbortController, setTimeout, clearTimeout });
+vm.runInContext(fs.readFileSync('web/viral-filter.js', 'utf8'), context);
+const app = fs.readFileSync('web/app.js', 'utf8');
+vm.runInContext(app.slice(0, app.lastIndexOf('\nbind();')), context);
+vm.runInContext(`
+initViralControls();
+if ($('viralTierName').textContent !== '宽松') throw Error('默认档');
+viralBatch = {scanned:4, pool:[
+  {key:'a',platform:'douyin',title:'灵感',fans:1000,interactions:1500,multiplier:1.5,age_days:1,url:'https://www.douyin.com/video/1',cover:'https://example.com/a.jpg',source:'douyin:search'},
+  {key:'b',platform:'douyin',fans:null,interactions:15000,multiplier:null,age_days:1},
+  {key:'c',platform:'douyin',fans:1000,interactions:15000,multiplier:15,age_days:null}
+]};
+refilterViral();
+if (viralRows.length !== 3 || $('viralCounts').textContent !== '值得跟 0 · 可参考 3 · 跳过 0') throw Error('宽松/待核统计');
+if (!$('viralGrid') || !$('viralGrid').children.length) throw Error('封面网格未渲染');
+const cardKids = ($('viralGrid').children || []).flatMap(c => c.children || []);
+if (!JSON.stringify($('viralGrid').children).includes('抖音搜索')) throw Error('卡片来源');
+if (!cardKids.some(ch => ch.tag === 'img' && String(ch.className || '').includes('preview-cover'))) throw Error('应显示封面图');
+viralSelected.add('a');
+$('viralTier').value = '1'; $('viralTier').events.input();
+if (viralRows.length !== 3 || viralSelected.size || viralRows.find(x=>x.key==='a').group !== '跳过') throw Error('较严失败归跳过并清理勾选');
+
+$('viralTier').value = '3'; $('viralTier').events.input();
+if (viralRows.length !== 3) throw Error('同批宽松');
+if (viralRows.length !== 3) throw Error('本批参考');
+$('viral-douyin-min_interactions').value = '99999'; $('viral-douyin-min_interactions').events.input();
+if ($('viralTierName').textContent !== '自定义') throw Error('自定义标签');
+$('viralTier').events.input();
+if ($('viral-douyin-min_interactions').value != 1200 || $('viralTierName').textContent !== '宽松') throw Error('拖条覆盖');
+markViralLocal(viralRows.find(x => x.key === 'a')); refilterViral();
+if (!viralRows.find(x => x.key === 'a').local) throw Error('同批重筛保留入库状态');
+
+$('viral-douyin-min_interactions').value = ''; $('viral-douyin-min_interactions').events.input();
+if (viralRows.length || !$('viralCounts').textContent.includes('有效')) throw Error('非法输入');
+$('viralTier').events.input();
+viralBatch = {candidates:[]}; refilterViral();
+if (!$('viralCounts').textContent.includes('重新查询')) throw Error('旧响应提示');
+`, context);
+assert.equal(requests, 0);
+console.log('slider interactions: OK; network requests: 0');
+
+// 用本地桩接住真实查询请求，验证批量输入和源参数，不访问 TikHub。
+(async () => {
+  await vm.runInContext(`(async () => {
+    const submitted = [];
+    api = async (path, options) => { submitted.push({path, body:options.body}); return {job_id:'mock'}; };
+    watchJob = (id, callback) => callback({state:'done', viral:{pool:[], scanned:12, calls:9,
+      coverage:{keywords:{douyin:['AI','科普']}, publish_time:180,douyin_sources:['search','lowfan'],
+        max_pages:3, pages_by_keyword:{douyin:{AI:3, '科普':2}}, source_calls:{douyin:5}}}});
+    $('viralSearchSource').checked = true;
+    $('viralLowfanSource').checked = true;
+    $('viralDouyin').checked = true;
+    $('viralXhs').checked = true;
+    $('viralKeywords').value = ' AI，科普\\nAI ';
+    $('viralSourceWindow').value = '180';
+    $('viralMaxPages').value = '3';
+    await searchViral({preventDefault(){}});
+    if (submitted.length !== 1) throw Error('应只提交一次查询');
+    const body = submitted[0].body;
+    if (submitted[0].path !== '/api/viral/preview' || body.publish_time !== 180 || JSON.stringify(body.douyin_sources) !== JSON.stringify(['search','lowfan']) || body.max_pages !== 3) throw Error('源参数');
+    if (JSON.stringify(body.keywords) !== JSON.stringify(['AI','科普'])) throw Error('批量拆词去重');
+    for (const text of ['AI（3页）','科普（2页）','近半年','168 小时','扫描 12 条','TikHub 调用 9 次']) {
+      if (!$('viralStatus').textContent.includes(text)) throw Error('摘要缺少：'+text);
+    }
+    $('viralKeywords').value = Array.from({length:20}, (_,i) => '词'+i).join('，');
+    await searchViral({preventDefault(){}});
+    if (submitted.length !== 2 || submitted[1].body.keywords.length !== 20) throw Error('20词应可提交');
+    $('viralKeywords').value += '，第21词';
+    await searchViral({preventDefault(){}});
+    if (submitted.length !== 2 || !$('viralStatus').textContent.includes('最多 20')) throw Error('21词应拒绝');
+    $('viralKeywords').value = '词'.repeat(81);
+    await searchViral({preventDefault(){}});
+    if (submitted.length !== 2) throw Error('超长关键词应拒绝');
+    $('viralKeywords').value = 'AI';
+    $('viralSearchSource').checked = false; $('viralLowfanSource').checked = false;
+    await searchViral({preventDefault(){}});
+    if (submitted.length !== 2 || !$('viralStatus').textContent.includes('来源')) throw Error('未选来源应拒绝');
+    $('viralSearchSource').checked = true;
+    await searchViral({preventDefault(){}});
+    if (JSON.stringify(submitted[2].body.douyin_sources) !== JSON.stringify(['search'])) throw Error('单搜索来源');
+    viralBatch = {coverage:{publish_time:7},pool:[{key:'old',platform:'douyin',fans:1000,interactions:10000,multiplier:10,age_days:8}]};
+     refilterViral();
+    if (viralRows[0].group !== '跳过') throw Error('拖条不可绕过已查询发布时间范围');
+
+    // 真实重筛/渲染/恢复函数 + 本地反馈接口桩；不允许额外查询。
+    let diskFeedback = {items:{}, authors:{}};
+    const localCalls = [];
+    api = async (path, options) => {
+      if (path !== '/api/viral/feedback') throw Error('审阅不应重新查询：'+path);
+      localCalls.push(path);
+      if (options?.body) {
+        const {platform,id,kind,mark} = options.body;
+        const target = diskFeedback[kind === 'author' ? 'authors' : 'items'];
+        if (mark) target[platform+':'+id] = mark; else delete target[platform+':'+id];
+      }
+      return {feedback:JSON.parse(JSON.stringify(diskFeedback))};
+    };
+    const sample = (id, more={}) => ({key:'douyin:'+id,id,platform:'douyin',title:'AI 教程',
+      fans:1000,interactions:2000,multiplier:2,age_days:1,author_id:'u',...more});
+    viralBatch = {calls:9, pool:[sample('1'),sample('2',{title:'游戏',multiplier:3}),
+      sample('3',{description:'优惠',interactions:10000}),
+      sample('4',{key:'xiaohongshu:4',platform:'xiaohongshu',author_id:'v',age_days:0.5})]};
+    $('viralExclude').value = '游戏';
+    $('viralFilterCommerce').checked = true;
+    viralSelected.add('douyin:2');
+    $('viralExclude').events.input();
+    if (viralSelected.has('douyin:2')) throw Error('排除必须取消勾选');
+    if (viralRows.find(x=>x.id==='2').group !== '跳过') throw Error('排除分组');
+    if (viralRows.find(x=>x.id==='3').group !== '跳过') throw Error('带货分组');
+    if (!JSON.stringify($('viralGrid').children).includes('排除词：游戏')) throw Error('排除依据');
+    if (!JSON.stringify($('viralGrid').children).includes('疑似带货依据：优惠')) throw Error('带货依据');
+    const excludedCard = $('viralGrid').querySelectorAll('article').find(x=>JSON.stringify(x).includes('排除词：游戏'));
+    if (!excludedCard.querySelectorAll('button').find(x=>x.textContent === '选择入库').disabled) throw Error('排除条目不能入库');
+    $('viralFilterCommerce').checked = false; $('viralFilterCommerce').events.change();
+    if (viralRows.find(x=>x.id==='3').group !== '可参考') throw Error('关闭带货分组');
+    $('viralSort').value = 'interactions'; $('viralSort').events.change();
+    if (viralRows[0].id !== '3') throw Error('按互动排序');
+    $('viralGrouping').value = 'platform'; $('viralGrouping').events.change();
+    if (!$('viralGrid').children.some(x=>x.tag==='h2' && x.textContent.includes('小红书'))) throw Error('平台分组标题');
+    const skipped = $('viralGrid').querySelectorAll('article').find(x => JSON.stringify(x).includes('排除词：游戏'));
+    const skipGroup = $('viralGrid').children.find(x => x.tag === 'details');
+    if (!skipGroup || skipGroup.open) throw Error('跳过默认折叠');
+    const detail = skipped.querySelectorAll('details')[0];
+    if (!detail || detail.open) throw Error('卡片详情默认折叠');
+    if (viralSelectable(viralRows.find(x=>x.id==='2'))) throw Error('跳过默认不可选');
+    detail.querySelectorAll('button').find(x=>x.textContent==='仍要入库（手动强制）').events.click();
+    if (!viralSelected.has('douyin:2') || !viralSelectable(viralRows.find(x=>x.id==='2'))) throw Error('详情强制入库');
+    const undo = $('viralGrid').querySelectorAll('button').find(x=>x.textContent==='撤销强制入库');
+    undo.events.click();
+    if (viralSelected.has('douyin:2') || viralSelectable(viralRows.find(x=>x.id==='2'))) throw Error('撤销强制');
+    const first = viralRows.find(x=>x.id==='1');
+    viralSelected.add(first.key);
+    await setViralFeedback(first, 'item', '不相关');
+    if (viralRows.find(x=>x.id==='1')?.group !== '跳过' || viralSelected.has(first.key)) throw Error('不相关归跳过并清理勾选');
+    if (viralRows.find(x=>x.id==='1')?.mark !== '不相关') throw Error('显示不相关');
+    await setViralFeedback(first, 'item', '值得跟');
+    if (viralRows.find(x=>x.id==='1')?.mark !== '值得跟') throw Error('更新值得跟');
+    await setViralFeedback(first, 'author', '屏蔽');
+    if (viralRows.find(x=>x.id==='1')?.group !== '值得跟' || viralRows.find(x=>x.id==='3')?.group !== '跳过') throw Error('手动值得跟优先于作者屏蔽');
+    await setViralFeedback(first, 'author', '');
+    if (viralRows.find(x=>x.id==='1')?.blocked) throw Error('撤销屏蔽');
+    viralFeedback = {items:{},authors:{}};
+    await loadViralFeedback();
+    if (viralRows.find(x=>x.id==='1')?.mark !== '值得跟') throw Error('下次出现加载本地反馈');
+    // 模拟刷新丢失所有内存，再从 localStorage 恢复本批与筛选控件。
+    const cachedPool = JSON.stringify(viralBatch.pool);
+    viralBatch = null; viralRows = []; $('viralExclude').value = ''; $('viralGrouping').value = 'mixed';
+    restoreViral();
+    if (JSON.stringify(viralBatch.pool) !== cachedPool || $('viralExclude').value !== '游戏' || $('viralGrouping').value !== 'platform') throw Error('刷新恢复批次和筛选');
+    if (viralRows.find(x=>x.id==='1')?.mark !== '值得跟') throw Error('恢复后叠加持久标记');
+    // 升级旧预览：恢复作品/自定义门槛/反馈，丢弃点赞版抖音 R；不自动花额度。
+    const v2 = JSON.parse(localStorage.getItem(VIRAL_CACHE_KEY));
+    const old = JSON.parse(JSON.stringify(v2)); old.version = 1; old.custom = false;
+    old.batch.pool[0].likes = 900; old.batch.pool[0].collects = 400;
+    old.batch.pool[0].interactions = 900; old.batch.pool[0].r = {value:99,grade:'明显爆'};
+    old.rules.douyin.min_interactions = 1000;
+    localStorage.setItem(VIRAL_CACHE_KEY, JSON.stringify(old));
+    restoreViral();
+    const migrated = viralRows.find(x=>x.key===old.batch.pool[0].key);
+    if (migrated.r || migrated.interactions !== 1300 || $('viral-douyin-min_interactions').value != 1200) throw Error('旧口径预览迁移');
+    old.custom = true; old.rules.douyin.min_interactions = 77;
+    localStorage.setItem(VIRAL_CACHE_KEY, JSON.stringify(old)); restoreViral();
+    if ($('viral-douyin-min_interactions').value != 77) throw Error('保留自定义门槛');
+    localStorage.setItem(VIRAL_CACHE_KEY, JSON.stringify(v2)); restoreViral();
+    const successfulApi = api;
+    api = async () => {throw Error('mock disk full');};
+    await setViralFeedback(first, 'item', '不相关');
+    if (viralFeedback.items[first.key] !== '值得跟' || !$('viralStorageStatus').textContent.includes('未保存')) throw Error('失败不得假装标记成功');
+    api = successfulApi;
+    const savedSet = localStorage.setItem;
+    localStorage.setItem = () => {throw Error('mock quota');};
+    refilterViral();
+    if (!$('viralStorageStatus').textContent.includes('无法保存') || !viralRows.length) throw Error('缓存写失败仍可筛选');
+    localStorage.setItem = savedSet;
+    localStorage.setItem(VIRAL_CACHE_KEY,'invalid JSON'); restoreViral();
+    if (viralBatch || !$('viralStorageStatus').textContent.includes('无法恢复')) throw Error('损坏缓存降级');
+    if (!localCalls.length) throw Error('应调用本地反馈接口');
+
+  })()`, context);
+  assert.equal(requests, 0);
+  console.log('batch query controls and summary: OK; network requests: 0');
+})().catch(error => { console.error(error); process.exitCode = 1; });

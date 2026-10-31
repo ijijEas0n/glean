@@ -51,6 +51,7 @@ function closePopovers() {
 function titleOf(row) { return String(row.title || row.platform_label || row.platform || ''); }
 function platformLabel(key) { return ({ douyin: '抖音', xiaohongshu: '小红书' })[key] || key || ''; }
 function jobStatusLabel(job) {
+  if (job.mode === 'viral_preview') return '正在筛选低粉候选…';
   const stage = job.progress?.stage || '';
   return ({ resolve: '正在读取内容…', fetch: '正在读取内容…', media: '正在下载图片和视频…',
     transcribe: '正在把说的话变成文字…', store: '正在存到本地…' })[stage] || '准备保存…';
@@ -62,7 +63,7 @@ function linksFrom(text) {
 function showPage(page) {
   closePopovers();
   state.page = page;
-  for (const [name, id] of Object.entries({ collect: 'pageCollect', library: 'pageLibrary', creators: 'pageCreators', settings: 'pageSettings', detail: 'pageDetail' })) $(id).hidden = name !== page;
+  for (const [name, id] of Object.entries({ collect: 'pageCollect', library: 'pageLibrary', creators: 'pageCreators', settings: 'pageSettings', detail: 'pageDetail', viral: 'pageViral' })) $(id).hidden = name !== page;
   document.querySelectorAll('.nav-link').forEach(a => a.classList.remove('is-active'));
   const active = ({ collect: 'navCollect', library: 'navLibrary', creators: 'navCreators', settings: 'navSettings', detail: 'navLibrary' })[page];
   if (active) $(active).classList.add('is-active');
@@ -909,6 +910,28 @@ async function loadCollectDefaults() {
     if (!state.onceOptionsDirty) { $('onceTranscribe').checked = state.config.transcribe_engine !== 'off'; $('onceKeep').checked = state.config.keep_video !== false; }
     syncTranscribeControl();
     state.configLoaded = true;
+    if (!viralDirty) {
+      const t = state.config.viral?.tier;
+      if (Number.isInteger(t) && t >= 0 && t <= 4) $('viralTier').value = t;
+      const days = state.config.viral?.publish_time;
+      if ([0, 7, 180].includes(days)) $('viralSourceWindow').value = days;
+      const sources = state.config.viral?.douyin_sources || (state.config.viral?.douyin?.source ? [state.config.viral.douyin.source] : ['search', 'lowfan']);
+      $('viralSearchSource').checked = sources.includes('search');
+      $('viralLowfanSource').checked = sources.includes('lowfan');
+      const pages = state.config.viral?.max_pages;
+      if (Number.isInteger(pages) && pages >= 1 && pages <= 3) $('viralMaxPages').value = pages;
+      applyViralTier();
+      for (const p of ['douyin', 'xiaohongshu']) {
+        for (const k of ViralFilter.keys) {
+          const v = state.config.viral?.[p]?.[k];
+          if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+            $(viralInputId(p, k)).value = v;
+            if (v !== ViralFilter.preset(p, Number($('viralTier').value))[k]) viralCustom = true;
+          }
+        }
+      }
+      updateViralLabel();
+    }
   } catch (err) { toast(`设置没读出来：${err.message}`, true); }
   syncCount();
 }
@@ -926,6 +949,7 @@ function setRoute() {
   const hash = location.hash || '#/';
   const item = hash.match(/^#\/item\/(.+)$/);
   if (item) { openDetail(decodeURIComponent(item[1])); return; }
+  if (hash.startsWith('#/viral')) { showPage('viral'); return; }
   if (hash.startsWith('#/settings')) { showPage('settings'); loadSettings(); return; }
   if (hash.startsWith('#/accounts') || hash.startsWith('#/creators')) { showPage('creators'); loadCreators(); return; }
   if (hash.startsWith('#/library') || hash.startsWith('#/favorites')) { showPage('library'); state.tab = hash.startsWith('#/favorites') ? 'favorites' : 'all'; if (state.tab !== 'all') { state.filters.author = ''; state.filters.authorId = ''; state.selected.clear(); } updateLibraryTabs(); loadLibrary(); return; }
@@ -936,6 +960,10 @@ function setRoute() {
 function updateLibraryTabs() { document.querySelectorAll('#libraryTabs button').forEach(b => b.classList.toggle('is-active', b.dataset.tab === state.tab)); }
 
 function bind() {
+  initViralControls();
+  $('viralForm').addEventListener('submit', searchViral);
+  $('viralSave').addEventListener('click', saveViral);
+  $('viralAll').addEventListener('change', () => { viralRows.filter(viralSelectable).forEach(x => { if ($('viralAll').checked) viralSelected.add(x.key); else viralSelected.delete(x.key); }); renderViral(); });
   $('collectForm').addEventListener('submit', submitCollect);
   $('urlInput').addEventListener('input', () => { invalidatePreview(); state.resolveSeq = (state.resolveSeq || 0) + 1; state.preview = null; state.previewLoading = false; state.profileMode = false; state.collectResolving = false; state.collectResolving = linksFrom($('urlInput').value).length > 0; $('inlinePreview').hidden = true; $('collectLower').hidden = false; $('previewShortcuts').hidden = true; syncCount(); scheduleInspect(); });
   $('urlInput').addEventListener('paste', () => setTimeout(scheduleInspect, 0));
@@ -983,7 +1011,334 @@ function bind() {
   window.addEventListener('hashchange', setRoute);
 }
 
+// 最近一批预览保存在当前浏览器；审阅反馈保存在服务端本地 JSON。
+let viralRows = [], viralSelected = new Set(), viralBusy = false;
+const viralForced = new Set();
+let viralSkipOpen = false;
+let viralBatch = null, viralCustom = false, viralDirty = false;
+let viralRBusy = false, viralRPlan = null;
+let viralFeedback = {items: {}, authors: {}}, viralFeedbackBusy = false;
+const VIRAL_CACHE_KEY = 'glean.viral.preview.v1';
+const viralCacheControls = ['viralExclude', 'viralFilterCommerce', 'viralSort', 'viralGrouping',
+  'viralKeywords', 'viralSourceWindow',
+  'viralMaxPages', 'viralSearchSource', 'viralLowfanSource', 'viralDouyin', 'viralXhs', 'viralTier'];
+function cacheViral() {
+  if (!viralBatch?.pool) return;
+  try {
+    const controls = Object.fromEntries(viralCacheControls.map(id => [id, {value: $(id).value, checked: $(id).checked}]));
+    localStorage.setItem(VIRAL_CACHE_KEY, JSON.stringify({version: 2, batch: viralBatch, controls, rules: viralRules(), custom: viralCustom}));
+    $('viralStorageStatus').textContent = '已保存本批预览；刷新后可继续免费筛选。反馈保存在本机 data/viral-feedback.json。';
+  } catch {
+    $('viralStorageStatus').textContent = '浏览器无法保存预览（空间不足或存储被禁用），刷新可能丢失本批；反馈仍单独保存。';
+  }
+}
+function restoreViral() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(VIRAL_CACHE_KEY) || 'null');
+    if (!cached || ![1, 2].includes(cached.version) || !Array.isArray(cached.batch?.pool)) return;
+    if (cached.batch.pool.some(row => !row || !['douyin', 'xiaohongshu'].includes(row.platform))) throw Error('缓存作品格式错误');
+    if (!['douyin', 'xiaohongshu'].every(p => ViralFilter.keys.every(k =>
+      Number.isFinite(Number(cached.rules?.[p]?.[k])) && Number(cached.rules[p][k]) >= 0))) throw Error('缓存门槛格式错误');
+    if (cached.version === 1) {
+      for (const row of cached.batch.pool) if (row.platform === 'douyin') delete row.r;
+      if (!cached.custom) for (const p of ['douyin', 'xiaohongshu'])
+        cached.rules[p] = ViralFilter.preset(p, Number(cached.controls?.viralTier?.value ?? 3));
+    }
+    for (const [id, value] of Object.entries(cached.controls || {})) {
+      if (!viralCacheControls.includes(id)) continue;
+      $(id).value = value.value; $(id).checked = value.checked;
+    }
+    for (const p of ['douyin', 'xiaohongshu']) for (const k of ViralFilter.keys)
+      $(viralInputId(p, k)).value = cached.rules[p][k];
+    viralCustom = !!cached.custom; viralDirty = true; viralBatch = cached.batch;
+    updateViralLabel(); refilterViral();
+  } catch { viralBatch = null; viralRows = []; $('viralStorageStatus').textContent = '最近预览无法恢复，请重新查询。'; }
+}
+async function loadViralFeedback() {
+  try { viralFeedback = (await api('/api/viral/feedback')).feedback; refilterViral(); }
+  catch (err) { $('viralStorageStatus').textContent = `读取反馈失败：${err.message}`; }
+}
+async function setViralFeedback(row, kind, mark) {
+  if (viralFeedbackBusy) return;
+  viralFeedbackBusy = true;
+  try {
+    viralFeedback = (await api('/api/viral/feedback', {method: 'POST', body: {
+      platform: row.platform, id: kind === 'author' ? row.author_id : row.id, kind, mark
+    }})).feedback;
+    refilterViral();
+  } catch (err) { $('viralStorageStatus').textContent = `保存反馈失败：${err.message}；本次标记未保存。`; }
+  finally { viralFeedbackBusy = false; }
+}
+const viralSelectable = row => ViralFilter.selectable(row, viralForced.has(row.key));
+const viralInputId = (p, k) => `viral-${p}-${k}`;
+function viralRules() {
+  return Object.fromEntries(['douyin', 'xiaohongshu'].map(p => [p,
+    Object.fromEntries(ViralFilter.keys.map(k => [k, Number($(viralInputId(p, k)).value)]))]));
+}
+function updateViralLabel() {
+  const name = viralCustom ? '自定义' : ViralFilter.names[Number($('viralTier').value)];
+  $('viralTierName').textContent = name;
+  $('viralTier').setAttribute('aria-valuetext', name);
+}
+function applyViralTier() {
+  const tier = Number($('viralTier').value);
+  for (const p of ['douyin', 'xiaohongshu']) for (const k of ViralFilter.keys)
+    $(viralInputId(p, k)).value = ViralFilter.preset(p, tier)[k];
+  viralCustom = false; updateViralLabel(); refilterViral();
+}
+function initViralControls() {
+  const labels = ['粉丝上限', '最低互动', '最低倍数', '本地天数'];
+  for (const p of ['douyin', 'xiaohongshu']) {
+    const group = node('fieldset'); group.append(node('legend', '', platformLabel(p)));
+    ViralFilter.keys.forEach((k, i) => {
+      const label = node('label', '', labels[i]); const input = node('input');
+      input.id = viralInputId(p, k); input.type = 'number'; input.min = '0';
+      input.step = k === 'min_multiplier' ? 'any' : '1';
+      input.required = true; label.append(input); group.append(label);
+      input.addEventListener('input', () => { viralDirty = true; viralCustom = true; updateViralLabel(); refilterViral(); });
+    });
+    $('viralThresholds').append(group);
+  }
+  for (const id of ['viralKeywords', 'viralSourceWindow', 'viralMaxPages', 'viralSearchSource', 'viralLowfanSource']) $(id).addEventListener('input', () => { viralDirty = true; });
+  $('viralTier').addEventListener('input', () => { viralDirty = true; applyViralTier(); });
+  for (const id of ['viralFilterCommerce', 'viralSort', 'viralGrouping'])
+    $(id).addEventListener('change', refilterViral);
+  $('viralExclude').addEventListener('input', refilterViral);
+  for (const id of ['viralRPages', 'viralRBudget']) $(id).addEventListener('input', () => {
+    viralRPlan = null; $('viralRConfirm').hidden = true;
+    $('viralRStatus').textContent = 'R 页数或预算已修改，请重新点击算 R 查看预计调用。';
+  });
+  $('viralRWorth').addEventListener('click', () => prepareViralR(null));
+  $('viralRRun').addEventListener('click', runViralR);
+  $('viralRCancel').addEventListener('click', () => { viralRPlan = null; $('viralRConfirm').hidden = true; $('viralRStatus').textContent = '已取消，本次未查询 TikHub。'; });
+  applyViralTier();
+  restoreViral();
+}
+function refilterViral() {
+  if (!viralBatch) return;
+  if (!Array.isArray(viralBatch.pool)) {
+    $('viralCounts').textContent = '本批缺少参考数据，请重新查询后再调松紧。'; return;
+  }
+  if (!$('viralForm').checkValidity()) {
+    $('viralCounts').textContent = '请填写有效的非负门槛数字。';
+    viralRows = []; viralSelected.clear(); renderViral(); return;
+  }
+  const rules = viralRules();
+  const range = viralBatch.coverage?.publish_time || 0;
+  const withinRange = rule => ({...rule, max_age_days: range ? Math.min(rule.max_age_days, range) : rule.max_age_days});
+  const pool = viralBatch.pool.map(row => {
+    const scored = ViralFilter.score(row, withinRange(rules[row.platform]));
+    return ViralFilter.classify(scored, {exclude: $('viralExclude').value, filterCommerce: $('viralFilterCommerce').checked}, viralFeedback);
+  });
+  const count = pool.filter(x => x.group !== '跳过').length;
+  $('viralCounts').textContent = ['值得跟', '可参考', '跳过'].map(g => `${g} ${pool.filter(x => x.group === g).length}`).join(' · ');
+  const coverage = viralBatch.coverage || {};
+  const sources = Object.entries(coverage.keywords || {}).map(([p, words]) => {
+    const pages = coverage.pages_by_keyword?.[p] || {};
+    return `${platformLabel(p)}：${words.map(k => `${k}（${pages[k] || 0}页）`).join('、')}，拉源 ${coverage.source_calls?.[p] || 0} 次`;
+  }).join('；');
+  const rangeLabel = {7:'近 7 天', 180:'近半年', 0:'不限'}[coverage.publish_time ?? 7];
+  const base = `${sources ? sources + '。' : ''}发布时间范围：${rangeLabel}。${coverage.douyin_sources?.includes('lowfan') ? '低粉榜固定 168 小时，每词 1 页。' : ''}每词最多 ${coverage.max_pages || 1} 页，扫描 ${viralBatch.scanned || 0} 条，可识别去重 ${pool.length} 条，TikHub 调用 ${viralBatch.calls || 0} 次（含补粉，重试另计）。同批重筛不消耗查询额度。`;
+  $('viralStatus').textContent = base + (count ? '' : ' 当前档暂无可参考内容，可往宽松拖或展开跳过；不能据此判断关键词没有好内容。')
+    + (viralBatch.coverage?.incomplete ? ' 覆盖不全，结果未完整核对。' : '') + (viralBatch.warnings || []).join('；');
+  viralRows = ViralFilter.sortRows(pool, $('viralSort').value || 'r');
+  const visible = new Set(viralRows.filter(viralSelectable).map(x => x.key));
+  viralSelected = new Set([...viralSelected].filter(k => visible.has(k)));
+  cacheViral();
+  renderViral();
+}
+function renderViral() {
+  const grid = $('viralGrid'); grid.replaceChildren();
+  const sections = ViralFilter.sections(viralRows, $('viralGrouping').value === 'platform');
+  for (const section of sections) {
+    let container = grid;
+    const title = `${section.group}${section.platform ? ' · ' + platformLabel(section.platform) : ''}（${section.items.length}）`;
+    if (section.group === '跳过') {
+      const collapsed = node('details', 'viral-skip'); collapsed.open = viralSkipOpen;
+      collapsed.append(node('summary', 'viral-group-title', title));
+      collapsed.addEventListener('toggle', () => { viralSkipOpen = collapsed.open; });
+      container = node('div', 'viral-grid'); collapsed.append(container); grid.append(collapsed);
+    } else grid.append(node('h2', 'viral-group-title', title));
+    for (const row of section.items) {
+      const selected = viralSelected.has(row.key);
+      const card = node('article', `preview-card${selected ? ' is-selected' : ''}${!viralSelectable(row) || viralBusy ? ' is-disabled' : ''}`);
+      card.setAttribute('role', 'listitem');
+      if (row.cover) {
+        const img = node('img', 'preview-cover'); img.loading = 'lazy'; img.alt = '';
+        img.src = coverUrl(row.cover, row.url || 'https://www.douyin.com/');
+        img.addEventListener('error', () => { img.replaceWith(node('div', 'preview-cover cover-empty')); }, { once: true });
+        card.append(img);
+      } else card.append(node('div', 'preview-cover cover-empty'));
+      const check = node('span', 'card-check', selected ? '✓' : '');
+      card.append(check);
+      if (row.local) card.append(node('span', 'saved-mark', '已入库'));
+      const body = node('div', 'viral-card-body');
+      body.append(node('div', 'viral-card-title', row.title || '（无标题）'));
+      body.append(node('div', 'viral-card-meta', `${platformLabel(row.platform)} · ${row.author || '作者未知'} · ${{'douyin:search':'抖音搜索','douyin:lowfan':'抖音低粉榜','xiaohongshu:search':'小红书搜索'}[row.source] || '来源待核'}`));
+      const mult = row.multiplier == null ? '倍待核' : `${Number(row.multiplier).toFixed(1)}×`;
+      const age = row.age_days == null ? '日期待核' : `${Math.floor(row.age_days)}天前`;
+      body.append(node('strong', 'viral-verdict', row.group));
+      body.append(node('p', 'viral-reason', row.reason));
+      const details = node('details', 'viral-details');
+      details.append(node('summary', '', '详情'));
+      details.addEventListener('click', event => event.stopPropagation());
+      details.append(node('div', 'viral-card-stats', `粉 ${row.fans ?? '待核'} · 赞 ${row.likes ?? '待核'} · 收藏 ${row.collects ?? '缺失'} · 互动 ${row.interactions ?? '待核'} · M ${mult} · R ${row.r?.value == null ? '未评级' : Number(row.r.value).toFixed(2) + '×'}`));
+      details.append(node('div', 'viral-card-meta', `${row.passed ? '四门槛全过' : (row.fail_reasons || []).join('、')} · ${age}`));
+      const rule = viralRules()[row.platform];
+      details.append(node('div', 'viral-review-reason', `门槛：粉≤${rule.max_fans}、互动≥${rule.min_interactions}、M≥${rule.min_multiplier}、天数≤${Math.min(rule.max_age_days, viralBatch?.coverage?.publish_time || Infinity)}`));
+      if (row.metric_notes?.length) details.append(node('div', 'viral-review-reason', row.metric_notes.join('、') + '（按 0）'));
+      if (row.review_reasons.length) details.append(node('div', 'viral-review-reason', row.review_reasons.join('、')));
+      if (row.commerce.length) details.append(node('div', 'viral-review-reason', `疑似带货依据：${row.commerce.join('、')}（待人工确认）`));
+      if (row.mark) details.append(node('div', 'viral-review-reason', `已标记：${row.mark}`));
+      if (row.r) details.append(node('div', 'viral-review-reason', `${row.r.grade} · 样本 ${row.r.samples} · 中位数 ${row.r.median ?? '未知'} · ${row.r.distribution}。${row.r.note}。${row.r.history_note} ${(row.r.metric_notes || []).join('、')} 获取于 ${new Date(row.r.fetched_at * 1000).toLocaleString()}${row.r.cache_hit ? '（缓存）' : ''}`));
+      if (row.group === '跳过' && !row.local) {
+        const force = node('button', 'quiet-link', viralForced.has(row.key) ? '撤销强制入库' : '仍要入库（手动强制）'); force.type = 'button';
+        force.disabled = viralBusy;
+        force.addEventListener('click', () => {
+          if (viralForced.has(row.key)) { viralForced.delete(row.key); viralSelected.delete(row.key); }
+          else { viralForced.add(row.key); viralSelected.add(row.key); }
+          renderViral();
+        });
+        details.append(force);
+      }
+      body.append(details);
+      const actions = node('div', 'viral-card-actions');
+      const calc = node('button', 'quiet-link', row.r ? '重算 R（优先缓存）' : '算 R'); calc.type = 'button';
+      calc.disabled = viralBusy || viralRBusy;
+      calc.addEventListener('click', event => { event.stopPropagation(); prepareViralR(row); });
+      actions.append(calc);
+      for (const mark of ['不相关', '值得跟']) {
+        const button = node('button', 'quiet-link', row.mark === mark ? `取消${mark}` : mark); button.type = 'button';
+        button.addEventListener('click', event => { event.stopPropagation(); setViralFeedback(row, 'item', row.mark === mark ? '' : mark); });
+        actions.append(button);
+      }
+      if (row.author_id) {
+        const block = node('button', 'quiet-link', row.blocked ? '解除屏蔽作者' : '屏蔽作者'); block.type = 'button';
+        block.addEventListener('click', event => { event.stopPropagation(); setViralFeedback(row, 'author', row.blocked ? '' : '屏蔽'); });
+        actions.append(block);
+      }
+      const select = node('button', 'quiet-link', selected ? '取消选择' : '选择入库'); select.type = 'button';
+      select.disabled = !viralSelectable(row) || viralBusy; select.setAttribute('aria-pressed', String(selected));
+      select.addEventListener('click', event => { event.stopPropagation(); if (viralSelected.has(row.key)) viralSelected.delete(row.key); else viralSelected.add(row.key); renderViral(); });
+      actions.append(select); body.append(actions);
+      if (row.url) {
+        const open = node('a', 'viral-open', '打开原页'); open.href = row.url; open.target = '_blank'; open.rel = 'noreferrer';
+        open.addEventListener('click', event => event.stopPropagation());
+        body.append(open);
+      }
+      card.append(body);
+      if (viralSelectable(row) && !viralBusy) {
+        card.addEventListener('click', () => {
+          if (viralSelected.has(row.key)) viralSelected.delete(row.key); else viralSelected.add(row.key);
+          renderViral();
+        });
+      }
+      container.append(card);
+    }
+  }
+  const fresh = viralRows.filter(viralSelectable);
+  $('viralAll').checked = fresh.length > 0 && fresh.every(x => viralSelected.has(x.key));
+  $('viralAll').disabled = viralBusy || !fresh.length;
+  $('viralSave').disabled = viralBusy || !viralSelected.size || viralSelected.size > 100;
+  $('viralRWorth').disabled = viralRBusy || viralBusy;
+  $('viralRRun').disabled = viralRBusy;
+  $('viralSearch').disabled = viralBusy || viralRBusy;
+  $('viralSearch').textContent = viralBatch ? '重新查询（消耗额度）' : '查询（消耗额度）';
+  $('viralTier').disabled = viralBusy;
+  $('viralThresholds').querySelectorAll('input').forEach(input => { input.disabled = viralBusy; });
+  $('viralSave').textContent = viralSelected.size > 100 ? '每次最多入库100条，请减少勾选' : viralSelected.size ? `入库 ${viralSelected.size} 条` : '勾选后入库';
+}
+async function searchViral(event) {
+  event.preventDefault(); if (viralBusy || viralRBusy) return;
+  const platforms = []; if ($('viralDouyin').checked) platforms.push('douyin'); if ($('viralXhs').checked) platforms.push('xiaohongshu');
+  if (!platforms.length) { $('viralStatus').textContent = '请至少选择一个平台'; return; }
+  const douyin_sources = [];
+  if ($('viralSearchSource').checked) douyin_sources.push('search');
+  if ($('viralLowfanSource').checked) douyin_sources.push('lowfan');
+  if (platforms.includes('douyin') && !douyin_sources.length) { $('viralStatus').textContent = '请至少选择一个抖音来源'; return; }
+  viralDirty = true;
+  const keywords = [...new Set($('viralKeywords').value.split(/[,，\r\n]/).map(x => x.trim()).filter(Boolean))];
+  if (keywords.length > 20 || keywords.some(k => [...k].length > 80)) {
+    $('viralStatus').textContent = '最多 20 个关键词，每个最多 80 字'; return;
+  }
+  viralRPlan = null; $('viralRConfirm').hidden = true; $('viralRStatus').textContent = '';
+  viralBusy = true; viralForced.clear(); viralSkipOpen = false; viralBatch = null; $('viralCounts').textContent = ''; viralRows = []; viralSelected.clear(); renderViral();
+  $('viralStatus').textContent = '正在查询候选，可能需要几分钟…';
+  try {
+    const r = await api('/api/viral/preview', { method: 'POST', body: { platforms, publish_time: Number($('viralSourceWindow').value), ...(douyin_sources.length ? {douyin_sources} : {}), max_pages: Number($('viralMaxPages').value), ...(keywords.length ? { keywords } : {}), tier: Number($('viralTier').value), thresholds: viralRules(), limit: 100 } });
+    watchJob(r.job_id, job => {
+      if (!['done', 'partial', 'failed'].includes(job.state)) return;
+      viralBusy = false;
+      if (job.state === 'failed') $('viralStatus').textContent = job.error || '查询失败';
+      else {
+        viralBatch = job.viral || {};
+        viralRows = viralBatch.candidates || [];
+        refilterViral();
+      }
+      renderViral();
+    });
+  } catch (err) { viralBusy = false; renderViral(); $('viralStatus').textContent = err.message; }
+}
+async function prepareViralR(row) {
+  if (viralRBusy || viralBusy) return;
+  viralRPlan = null; $('viralRConfirm').hidden = true;
+  viralRBusy = true; renderViral();
+  try {
+    const plan = await api('/api/viral/r/estimate', {method: 'POST', body: {
+      items: row ? [row] : viralBatch?.pool || [], worth_only: !row,
+      pages: Number($('viralRPages').value || 2), budget: Number($('viralRBudget').value || 20)
+    }});
+    $('viralRStatus').textContent = `共 ${plan.authors} 位作者，${plan.cached_authors} 位有 24 小时内缓存；预计最多 ${plan.uncached_authors} 位未缓存作者 × ${plan.pages} 页 = ${plan.estimated_calls} 次 TikHub 调用，独立上限 ${plan.budget} 次（无自动重试）。${plan.missing.join('；')}${plan.over_budget ? ' 超出预算，请减少作者或页数。' : ''}`;
+    if (!plan.over_budget && plan.authors) { viralRPlan = plan; $('viralRConfirm').hidden = false; }
+  } catch (err) { $('viralRStatus').textContent = `R 估算失败：${err.message}`; }
+  finally { viralRBusy = false; renderViral(); }
+}
+async function runViralR() {
+  if (!viralRPlan || viralRBusy) return;
+  const plan = viralRPlan; viralRPlan = null; viralRBusy = true;
+  $('viralRConfirm').hidden = true; renderViral();
+  $('viralRStatus').textContent = '正在查询近作并计算 R…';
+  try {
+    const result = await api('/api/viral/r', {method: 'POST', body: {plan_id: plan.plan_id}, timeout: 1250000});
+    for (const row of viralBatch?.pool || []) if (result.results[row.key]) row.r = result.results[row.key];
+    refilterViral();
+    $('viralRStatus').textContent = `本次 TikHub 调用 ${result.calls} 次，已计算 ${Object.keys(result.results).length} 条。${Object.entries(result.errors).map(([author, error]) => `${author}：${error}`).join('；')}${result.uncomputed.length ? ' 未完成：' + result.uncomputed.join('、') : ''}${plan.missing.length ? '；' + plan.missing.join('；') : ''}`;
+  } catch (err) { $('viralRStatus').textContent = `R 计算失败：${err.message}；已完成作者的历史保存在本机，可再次点击复用缓存。`; }
+  finally { viralRBusy = false; renderViral(); }
+}
+function markViralLocal(row) {
+  row.local = true; viralSelected.delete(row.key);
+  const original = viralBatch?.pool?.find(x => x.key === row.key);
+  if (original) original.local = true;
+  cacheViral();
+}
+async function saveViral() {
+  if (viralBusy) return;
+  const selected = viralRows.filter(x => viralSelected.has(x.key) && viralSelectable(x));
+  if (!selected.length || selected.length > 100) return;
+  viralBusy = true; renderViral();
+  try {
+    const r = await api('/api/viral/save', { method: 'POST', body: { items: selected.map(x => ({ platform: x.platform, id: x.id, url: x.url })), options: { transcribe: $('viralTranscribe').checked } } });
+    for (const existing of r.existing || []) { const row = viralRows.find(x => x.key === existing.id); if (row) { markViralLocal(row); } }
+    if (!r.job_id) { viralBusy = false; renderViral(); $('viralStatus').textContent = '所选作品已在本地，已跳过下载'; return; }
+    $('viralStatus').textContent = '正在保存所选作品…'; refreshJobs();
+    watchJob(r.job_id, job => {
+      $('viralStatus').textContent = job.progress?.detail || job.progress?.label || '正在保存…';
+      if (!['done', 'partial', 'failed'].includes(job.state)) return;
+      viralBusy = false;
+      for (const child of job.partial?.children || []) {
+        if (!child.local) continue;
+        const row = viralRows.find(x => x.url === child.url);
+        if (row) { markViralLocal(row); }
+      }
+      renderViral();
+      $('viralStatus').textContent = job.state === 'failed' ? job.error : `完成：${job.children_ok || 0} 条成功，${job.children_failed || 0} 条失败。${(job.warnings || []).join('；')}`;
+    });
+  } catch (err) { viralBusy = false; renderViral(); $('viralStatus').textContent = err.message; }
+}
+
 bind();
+loadViralFeedback();
 showPage('collect');
 syncCount();
 loadCollectDefaults();

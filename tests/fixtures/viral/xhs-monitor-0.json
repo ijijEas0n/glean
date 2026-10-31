@@ -1,0 +1,312 @@
+{
+  "code": 200,
+  "data": {
+    "search_id": "a584abf77a1147c1@0fdaecd501b843e2",
+    "search_session_id": "df2d4d70a6234969b0bb8acdbac8f262",
+    "page": 1,
+    "next_page": 2,
+    "data": {
+      "items": [
+        {
+          "note": {
+            "id": "6a72cbc70000000032023c97",
+            "desc": "#00:34  确定问题 #00:48  二次验证 #00:59  先让AI做你的粉丝 #01:10  调整AI成为专家",
+            "title": "AI使用分享｜我如何用AI做出涨粉1.5万的爆款",
+            "timestamp": 1785908168,
+            "liked_count": 28656,
+            "collected_count": 40410,
+            "type": "video",
+            "user": {
+              "userid": "5926956382ec391304e64116",
+              "nickname": "楚豆泥"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "69941005000000001a02baed",
+            "desc": "最近我又尝试分析了一下为什么很多人意识不到用ai生成内容有什么问题，除了老生常谈的版权意识淡漠，这次想到了关于认知世界的",
+            "title": "已经悄然降临",
+            "timestamp": 1771311110,
+            "liked_count": 15339,
+            "collected_count": 2921,
+            "type": "normal",
+            "user": {
+              "userid": "676a94b0000000001801444a",
+              "nickname": "Omnomnomnom"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "6983879d000000002202eb6a",
+            "desc": "① Jeff su 视频节奏快、内容直给，特别适合普通人想用AI做点实际事儿的，比较入门和实用；比如他用8分钟说清楚怎么",
+            "title": "建议大家都去死磕这几位大神",
+            "timestamp": 1770253237,
+            "liked_count": 15317,
+            "collected_count": 26459,
+            "type": "normal",
+            "user": {
+              "userid": "62fccddd000000001501dcc9",
+              "nickname": "招白debug"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "69ce826f000000002200cc32",
+            "desc": "一个月前还在聊龙虾，现在又聊回了 Claude。AI 时代，风口转得比换手机壳还快。[石化R] #openclaw",
+            "title": "一个月前人人养龙虾，现在却安静了",
+            "timestamp": 1775174489,
+            "liked_count": 6962,
+            "collected_count": 4649,
+            "type": "normal",
+            "user": {
+              "userid": "5981a5f25e87e718caad54dd",
+              "nickname": "大西瓜的小木屋"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "6ade3ba9000000002b00183e",
+            "desc": "每次都是屎里淘金,大爆剧不想看,新剧易踩雷,看个做饭也要谈恋爱,看个经营也要谈恋爱,看个末世也要谈恋爱,看个萌娃一直在吵",
+            "title": "苦ai漫剧已久",
+            "timestamp": 1792949161,
+            "liked_count": 5103,
+            "collected_count": 3523,
+            "type": "normal",
+            "user": {
+              "userid": "63678135000000001f015b7e",
+              "nickname": ".舟"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "6adf1d18000000000e00f4a9",
+            "desc": "老干妈AI裁员传闻引争议 近期，老干妈因一组数据被推上风口浪尖。起因是高管在9月披露：贵阳基地AI视觉质检全面上线，不良",
+            "title": "老干妈从600裁到48，网友锐评：下架！",
+            "timestamp": 1793006872,
+            "liked_count": 5022,
+            "collected_count": 1243,
+            "type": "normal",
+            "user": {
+              "userid": "68d24b9b0000000021024a3f",
+              "nickname": "Ai与商业"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "69fabfd90000000035023012",
+            "desc": "最近观察了下， 身边用AI在赚钱的人， 路子居然这么杂。 盘完之后我自己都有点懵。 挨个给大家说说。 #副业  #AI工",
+            "title": "天哪，原来AI的搞钱路数这么多",
+            "timestamp": 1778040793,
+            "liked_count": 5012,
+            "collected_count": 5225,
+            "type": "normal",
+            "user": {
+              "userid": "5886ac726a6a6965bbeaaded",
+              "nickname": "是金三啊"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "6ad9dc15000000002b00c29a",
+            "desc": "最近某辣酱暴雷了，因为启用ai机器淘汰了五百名员工，被全网抵制。 这就是为什么我总说画师不必担心ai，因为等ai创死各行",
+            "timestamp": 1792662549,
+            "liked_count": 4929,
+            "collected_count": 223,
+            "type": "normal",
+            "user": {
+              "userid": "6185ee10000000001000a106",
+              "nickname": "画画的花噎菜"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "693ae86c000000001e01192a",
+            "desc": "⚠️⚠️⚠️ 一旦用了你就会发现，当额度用完的时候，你的工作停滞了… 而你尝试使用别的产品，你会被气个半死[哭惹R] 珍",
+            "title": "千万别用Claude！！！",
+            "timestamp": 1765468268,
+            "liked_count": 4535,
+            "collected_count": 2783,
+            "type": "normal",
+            "user": {
+              "userid": "5acc23cbe8ac2b69a534d848",
+              "nickname": "BLANK GONG"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "6ad9cf5f000000003301a951",
+            "desc": "我在家里做了一个巨型拼豆床 能自由组合拼成各种造型 简直太好玩啦 卧室里还有我的格力AI节能空调舒适风Ultra挂机 帮",
+            "title": "我给自己做了个巨型拼豆沙发🛋️还能变造型",
+            "timestamp": 1792661031,
+            "liked_count": 4356,
+            "collected_count": 1933,
+            "type": "video",
+            "user": {
+              "userid": "5bf02fb40bdb020001300daa",
+              "nickname": "可爱的小蜜豆"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "6968c9260000000021031f35",
+            "desc": "我让Chat按数据依据，和冰山分层方法论——用**动力/引力/耐力**三维度，把全球AI产业映射到深度研究。 运营耗时",
+            "title": "全球AI产业十层冰山图（GPT5.2Pro 研究）",
+            "timestamp": 1768474918,
+            "liked_count": 4059,
+            "collected_count": 3592,
+            "type": "normal",
+            "user": {
+              "userid": "5bacfaf429a716000169162e",
+              "nickname": "阿奇Aki"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "6a7071f9000000002102003f",
+            "desc": "真实经验纯个人分享，无任何不良引导 #搞钱  #AI搞事业howto  #人工智能  #howto用好AI  #短视频",
+            "title": "三天时间，我怎么样用AI赚到5000",
+            "timestamp": 1785754106,
+            "liked_count": 3970,
+            "collected_count": 3526,
+            "type": "video",
+            "user": {
+              "userid": "61c8083c0000000010006b41",
+              "nickname": "奥一（AI版）"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "69287668000000001e013bf5",
+            "desc": "最近我特别内耗，可能是因为tk业绩下滑或者一大堆事情压着我，导致我什么都做不下去，这几天一直沉迷一些莫须有的东西上，还有",
+            "title": "内耗的我迎来了最严厉的ai",
+            "timestamp": 1764259432,
+            "liked_count": 3928,
+            "collected_count": 1868,
+            "type": "normal",
+            "user": {
+              "userid": "65883d6e000000001c00bb55",
+              "nickname": "momo（顺顺淡淡）"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "69ad8870000000001b0174d9",
+            "desc": "大家觉得Gemini好用还是Claude好用，还是chatgpt5.4好用，每个的优缺点都是些啥，你们使用的时候都出现过",
+            "title": "ai之神是谁",
+            "timestamp": 1772980336,
+            "liked_count": 3922,
+            "collected_count": 2522,
+            "type": "normal",
+            "user": {
+              "userid": "5dd8c7ec0000000001007d31",
+              "nickname": "耶噜噜噜"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "69deb50f000000002200c0ea",
+            "desc": "之前一直觉得ai各种不行各种出错 看了很多领域的公司 但凡ai占比过高没有深度行业搭建的都会直接pass 原因是容易复制",
+            "title": "ai开始令我恶心",
+            "timestamp": 1776203023,
+            "liked_count": 2906,
+            "collected_count": 543,
+            "type": "normal",
+            "user": {
+              "userid": "575a1a8f50c4b42a94c8e430",
+              "nickname": "sadcookies"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "6adeb6a50000000009002a1e",
+            "desc": "CapCut即将在ChatGPT上线视频生成和剪辑插件，用户可通过自然语言指令生成视频草稿并修改，最后转至CapCut编",
+            "title": "字节这一刀，剪辑师真要慌了",
+            "timestamp": 1792980645,
+            "liked_count": 2722,
+            "collected_count": 1897,
+            "type": "normal",
+            "user": {
+              "userid": "65bd77c5000000000903cf24",
+              "nickname": "大厂李白"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "6a0271ec0000000038034b22",
+            "desc": "几百块还是靠 AI 公司做到几十亿美金估值。 现在还是AI红利早期 [一R]目前大概分几层 第一层：普通个人副业（几百",
+            "title": "大家通过AI都赚了多少钱",
+            "timestamp": 1778545132,
+            "liked_count": 2581,
+            "collected_count": 1810,
+            "type": "normal",
+            "user": {
+              "userid": "63df4faa000000002702b423",
+              "nickname": "抱富虾"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "6a0d279a0000000035031a40",
+            "desc": "二编： 没想到发个帖子交流，评论区会这么热闹。 有人说， “就蒜挤进去也是橘外人（可以这样理解吗？😂）”，可我不想做一",
+            "title": "好可怕 感觉已经出现认知断层了…",
+            "timestamp": 1779247002,
+            "liked_count": 1993,
+            "collected_count": 1233,
+            "type": "normal",
+            "user": {
+              "userid": "67992754000000000e011129",
+              "nickname": "桐"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "6adfbe6e000000002100d5fe",
+            "desc": "教授提到的拳击陪练英文原文是：sparring partner. 我觉得这个说法很好。LLM, large langua",
+            "title": "AI势不可挡，学习大禹治水",
+            "timestamp": 1793048174,
+            "liked_count": 1736,
+            "collected_count": 559,
+            "type": "video",
+            "user": {
+              "userid": "5c88bde60000000011000bc1",
+              "nickname": "张玫"
+            }
+          }
+        },
+        {
+          "note": {
+            "id": "6ae06db0000000002a030360",
+            "desc": "咱就是说 GPT 能不能不要像写说明书一样写界面了哇，甚至把我的原话都给写在 button 的下面当解释说明，一大坨字放",
+            "title": "高级 UI 我来了！速存这句Prompt！",
+            "timestamp": 1793093040,
+            "liked_count": 1659,
+            "collected_count": 2214,
+            "type": "normal",
+            "user": {
+              "userid": "62c98736000000001501e075",
+              "nickname": "数字生命卡兹克"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

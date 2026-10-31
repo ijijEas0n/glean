@@ -410,6 +410,108 @@ Base: `http://127.0.0.1:8899`
   这样"再拉几条别的"不会重复抓、也不会漏。这是这条链路能不能用的关键。
 - 「返回」回到刚才那条内容（靠 history，`打开预览` 走 pushState）。
 
+### 4.2.7 低粉爆款候选筛选
+
+这是候选筛选，**非预测**。不做账号相对中位数 R、不做评论抓取、不把官方话题热榜当作品爆款；开源核心不引入浏览器自动化、不自己维护 cookie / 登录态。TikHub 鉴权、代理、错误沿用 `server/tikhub.py`，缺 Key 立即返回中文 `ok:false`，不创建查询任务。
+
+定义参考 [rays-brain-kit 爆款雷达](https://github.com/imraywang/rays-brain-kit/tree/main/50-系统/40-自动化/爆款雷达) 的 score_item 门槛思路。独立实现，无复制依赖；按本产品约定，分母是 `max(fans,1)`（rays 当前实现为 max(fans,100)，此处不照搬）。评分不四舍五入后比较，页面仅对显示做取舍。
+
+主控是一条五档松紧滑条，默认「3 宽松」找灵感。四个数字放在折叠的高级门槛内；手改后显示「自定义」，再次拖条覆盖两平台四项数字。粉≤上限、互动≥下限、倍数≥下限、0≤日期距今≤本地天数同时满足才算本档通过，倍数=互动/max(粉丝,1)。
+
+| 档位 | 抖音：粉上限 / 最低赞 / 最低倍数 / 本地天数 | 小红书：粉上限 / 最低赞+藏 / 最低倍数 / 本地天数 |
+|---|---|---|
+| 0 最严 | 30000 / 20000 / 5 / 7 | 5000 / 2000 / 2 / 7 |
+| 1 严选（旧默认） | 50000 / 10000 / 3 / 14 | 10000 / 1000 / 1 / 14 |
+| 2 适中 | 50000 / 3000 / 1 / 14 | 10000 / 500 / 0.5 / 14 |
+| 3 宽松（新默认） | 50000 / 1000 / 0.3 / 14 | 10000 / 300 / 0.1 / 14 |
+| 4 最松 | 100000 / 300 / 0.1 / 30 | 30000 / 100 / 0.05 / 30 |
+
+拖条或改门槛只用本次 `pool` 免费重筛，不拉源、不补查作者；换关键词/平台后点「重新查询」才消耗 TikHub 额度。界面显示「严选 N · 本档 M · 本批参考 K · 待核 U」，这些计数有包含关系，不能相加。「看本批参考」展示未达标原因、待核记录，仍须明确勾选才入库。每次最多选择100条入库。
+
+缺粉不当0，缺日期不伪装近期，缺互动也标待核；待核不算任何档通过。即使旧调用传 `allow_missing_date:true`，也不会放行日期未知项。无候选时显示扫描/可识别条数，提示向宽松拖或看参考，不能断言关键词没有好内容。本地天数调至30不扩大源覆盖：抖音默认低粉榜仍约168小时；仅各关键词首屏，最多200条扫描、24次逻辑调用（重试另计）。本批保存在页面/内存任务中，重启或刷新后须重新查询，未知粉不会随拖条自动补查。
+
+日期读取秒/毫秒时间戳或ISO，无时区按UTC；不从作品ID猜日期。展示计数如1.2万按近似精度换算，未来日期不通过。
+
+`POST /api/viral/preview`：
+
+```json
+{
+  "platforms": ["douyin", "xiaohongshu"],
+  "keywords": ["AI", "科普"],
+  "tier": 3,
+  "thresholds": {"douyin": {"min_multiplier": 3}},
+  "limit": 20
+}
+```
+
+platforms 默认两平台；keywords 可选，对本次全部平台覆盖，默认使用分平台配置。1–5个关键词，每个≤80字；limit 为1–100整数（默认20）。tier 是0–4整数，默认读配置 viral.tier（出厂3）。显式tier覆盖历史保存的四数，然后应用thresholds覆盖；未传tier时兼容已保存的自定义四数。thresholds 只接受四门槛及旧兼容字段 allow_missing_date（不放行缺日期）。全参数验证后才提交，非法参数返回400 `{"ok":false,"error":"中文原因"}`。
+
+返回202 `{"ok":true,"job_id":"j_...","mode":"viral_preview"}`。复用原有 JOBS、GET `/api/jobs/<id>` 和 SSE，不另建任务系统、不创建虚拟清单 item、不写库、不下载/转写。与主页 preview 的区别是结果在 `job.viral`，没有主页落盘：
+
+```json
+{
+  "ok": true,
+  "job": {
+    "id": "j_...", "mode": "viral_preview", "state": "done", "item_id": "",
+    "viral": {
+      "candidates": [{
+        "platform": "douyin", "id": "7401819680706448675",
+        "key": "douyin:7401819680706448675",
+        "url": "https://www.douyin.com/video/7401819680706448675",
+        "title": "示例", "author": "示例作者", "author_id": "",
+        "fans": 1000, "likes": 10000, "collects": null,
+        "interactions": 10000, "multiplier": 10,
+        "published_at": "2026-10-27T00:00:00+00:00", "age_days": 1,
+        "passed": true, "local": false, "item_id": "",
+        "raw": {"id":"7401819680706448675","type":"","metrics_source":"search_or_lowfan","fans_source":"search","likes":10000,"collects":null}
+      }],
+      "warnings": [], "scanned": 50, "calls": 1, "limit": 20,
+      "thresholds": {"douyin":{"max_fans":50000,"min_interactions":1000,"min_multiplier":0.3,"max_age_days":14,"allow_missing_date":false}}
+    }
+  }
+}
+```
+
+去重 key=`platform:作品id`，id 是业务ID；落库仍由现有适配器确定 `<platform>-<kind>-<id>`。按未舍入倍数倒序后截 limit；`raw` 仅含白名单摘要，无完整上游响应/密钥。`local/item_id` 复用业务ID查重。预览结果仅留在内存任务历史，重启后失效。`done` / `partial` 只表示候选查询结束，不能说已入库或字幕已通过。拉源失败使 job failed，job.error 保留中文失败原因；补粉失败保留该作者作品并标待核，写 warnings，任务为 partial。粉丝查无字段也保留待核，不标成零。
+
+新增向后兼容字段（都位于 `job.viral`）：
+
+- `candidates`：当前档通过的条目，按倍数排序截limit，旧语义保留。
+- `pool`：最多200条可识别去重后的白名单标准化作品，含未达标与待核，不被limit截断。只返回标题/作者/链接、粉/互动/倍数、日期/距今天数、本地存在性和白名单raw摘要，无完整上游raw。
+- `tier`（0–4）、`preset:{id,name}`（手改为自定义）、`thresholds_applied`（分平台实际四数）、`thresholds`（兼容别名）、`presets`（两平台五档数字）、`evaluated_at`（固定本批判定时间）。
+- 每条 `fail_reasons`、`passed`、`pending`、`strict_pass`、`pass_level`（strict/tier/pool/pending）、`fans_note`（未补查/调用上限未补查/缺作者ID/补查无结果或失败）。前端用本批age_days固定比较，前后端判定一致。
+- `stats`：scanned / recognized（去重可识别数）/ strict_pass / tier_pass / pool / pending / pending_fans / pending_date / pending_interactions。缺失原因可重叠，不能相加。strict_pass始终按1档旧严选口径，tier_pass为当前门槛全池通过数，不受limit截断。
+- `coverage`：incomplete（调用/扫描预算触顶）、authors_checked（实际尝试补查作者数）、source_window_hours（抖音低粉源168，其它未知为null）；原scanned/calls/limit/warnings保留。
+
+先取所有平台/关键词首屏，再按互动降序为当前档互动/日期合格者补粉；作者一次查询、失败也缓存，总逻辑调用预算默认24。预算不足时未查项留待核，coverage.incomplete明确标覆盖不全。不提供隐性补查，放宽后粉未知仍待核。
+
+`POST /api/viral/save`：
+
+```json
+{"items":[{"platform":"douyin","id":"7401819680706448675"},{"url":"https://www.xiaohongshu.com/explore/6aad453b00000000110339cb"}],"options":{"download_media":true,"transcribe":false}}
+```
+
+只在用户勾选/明确选择后提交。items 1–100条，可传平台+业务ID或作品长链接；拒绝主页、短链和其它平台。按作品去重，已存在项进入 existing 并跳过下载，其余用 `JOBS.create_batch` → 原有 resolve/适配器/download/可选转写/落盘管线。默认转写关闭，download_media 沿用配置。执行时再查重，以覆盖排队期间已落盘的作品。响应202 `{"ok":true,"job_id":"j_...","mode":"batch","count":1,"existing":[{"id":"xiaohongshu:...","url":"...","item_id":"xiaohongshu-images-..."}]}`；全部已在库中返回200 `{"ok":true,"job_id":null,"count":0,"existing":[...]}`。批次子项结果沿用 job.partial.children，逐条检查 batch_state/error，字幕验收仍见原有约定。
+
+配置位置：`server/config.py` 的 `viral` 对象，默认具体值在 `server/viral.py:DEFAULTS`。可用 POST `/api/config` 保存，例如：
+
+```json
+{"viral":{"tier":3,"enabled":true,"max_calls":24,"douyin":{"keywords":["AI"],"source":"lowfan","path":"/api/v1/douyin/billboard/fetch_hot_total_low_fan_list","user_path":"/api/v1/douyin/app/v3/handler_user_profile","max_fans":50000,"min_interactions":1000,"min_multiplier":0.3,"max_age_days":14,"allow_missing_date":false},"xiaohongshu":{"keywords":["AI"],"path":"/api/v1/xiaohongshu/app_v2/search_notes","user_path":"/api/v1/xiaohongshu/app_v2/get_user_info","max_fans":10000,"min_interactions":300,"min_multiplier":0.1,"max_age_days":14,"allow_missing_date":false}}}
+```
+
+未提供字段深合并默认；POST config 的 viral 对象替换原先自定义 viral 对象，不逐层累加历史覆盖。enabled=false 或环境 `GLEAN_VIRAL_ENABLED=0/false/off` 禁用查询。path 覆盖只允许本平台 `/api/v1/<platform>/...`，不能带主机/查询串。查询参数模板固定，换不兼容 schema 的端点仍需修改适配器。
+
+公开端点与待实测假设：
+
+- 抖音默认 POST [低粉爆款榜](https://docs.tikhub.io/252393854e0)，body 为 page=1、page_size=50、date_window=168、keyword。它是作品源，仍须重新经过本地四门槛；源窗口7天比本地14天更窄，不意味着覆盖14天全部作品。
+- 抖音可选关键词搜索：同时设 source=search、path=`/api/v1/douyin/search/fetch_video_search_v2`，POST body keyword/cursor=0。[TikHub 官方调用示例](https://github.com/TikHub/tikhub-plugin/blob/main/skills/douyin/SKILL.md)。搜索作者无粉丝时，用已有 handler_user_profile 补粉。
+- 小红书 GET [search_notes](https://docs.tikhub.io/420136398e0)，query keyword/page=1/sort_type=popularity_descending；GET [get_user_info](https://docs.tikhub.io/420136395e0)，query user_id。当前档互动/日期有希望通过时另查作者粉丝，任务内按作者缓存（失败也缓存，不重复付费重试同作者）。
+- **路径/方法有公开文档依据；实际返回字段和包装是假设/待实测**。支持低粉榜 data.data.objs、搜索 data.data.items[].note、aweme_info/note_card 及常见计数字段。格式不识别直接报错，不伪装成零候选；小红书没有显式时间字段时留在pool标日期待核。
+- 默认关键词AI，每关键词仅首屏；每次最多扫描200条，max_calls默认24、可配置1–50次逻辑调用（TikHub客户端的自动重试、代理探测另计），触上限有 warning。limit 只限制返回候选条数，不保证等同计费次数。预览本身会产生 TikHub费用，网页按钮和 Agent 必须说明。
+
+Web 入口位于「收集 → 低粉爆款」，五档滑条+折叠高级门槛，独立小表格展示粉/互动/倍数、平台与作者、日期及档/原因，标题链接打开原作，支持全选未入库；不默认选择任何作品。明确选择后才 save，任务进度复用 watchJob。公开核心不含浏览器依赖。
+
+
 ### 4.3.1 一次粘多条：全部丢给后端排队
 
 **不要在客户端串行 await。** 三个原因（都踩过）：

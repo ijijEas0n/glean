@@ -366,6 +366,15 @@ def run_batch(
             publish_batch()
             continue
 
+        if options.get("skip_existing"):
+            biz = child_resolved.ids.get("aweme_id") or child_resolved.ids.get("note_id") or ""
+            local_id = store.find_same_work(child_resolved.platform, biz)
+            if local_id:
+                child_row.update({"local": True, "item_id": local_id, "batch_state": "done"})
+                done_ids.append(local_id)
+                publish_batch()
+                continue
+
         try:
             adapter = get_adapter(child_resolved)
             # 逐条控制转写：用户在清单里勾了"这条要转文字"就转，没勾就不转。

@@ -162,11 +162,29 @@ def proxy_state() -> dict[str, Any]:
         return dict(_proxy_state)
 
 
-def current_proxy() -> str:
+def current_proxy(*, probe: bool = True) -> str:
     """取当前应使用的代理；未探测过则先探测。"""
     with _lock:
         if _proxy_state["checked_at"] and time.time() - _proxy_state["checked_at"] < 300:
             return str(_proxy_state["url"])
+    if not probe:
+        # 按需 R 的严格预算模式不向 TikHub 发探测请求。
+        config = load_config()
+        configured = str(config.get("proxy") or "").strip()
+        if configured == "direct":
+            return ""
+        if configured:
+            return configured
+        import os
+        for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+            if os.environ.get(name):
+                return os.environ[name]
+        if config.get("last_proxy_ok"):
+            return str(config["last_proxy_ok"])
+        for url in PROXY_CANDIDATES:
+            if _port_open("127.0.0.1", int(url.rsplit(":", 1)[1])):
+                return url
+        return ""
     return str(detect_proxy().get("url") or "")
 
 
@@ -182,12 +200,12 @@ def _explain_http(code: int, body: str) -> str:
     """把 TikHub 的 HTTP 错误翻成人话 + 能直接照做的下一步。"""
     low = body.lower()
     if code == 402 or "insufficient balance" in low:
-        return ("TikHub 账号余额不足（接口返回 402）。"
+        return ("TikHub 余额不足，请充值（接口返回 402）。"
                 "到 tikhub.io 充值后即可继续。"
                 "注意：部分接口只扣付费余额，免费额度不能抵扣。")
     if code == 401 or code == 403 and "1010" not in low:
         return ("TikHub 拒绝了这次请求（鉴权失败）。"
-                "检查 Key 是否有效：echo $TIKHUB_API_KEY")
+                "请在设置里检查 Key 是否有效，勿向聊天发送 Key")
     if code == 429:
         return "TikHub 限流了（请求太频繁），等一会儿再试。"
     if code >= 500:
@@ -214,6 +232,8 @@ def request(
     *,
     method: str | None = None,
     timeout: int = TIMEOUT,
+    max_attempts: int = MAX_ATTEMPTS,
+    probe_proxy: bool = True,
 ) -> dict[str, Any]:
     """调用 TikHub。成功返回完整响应体（含 data）；失败抛 TikHubError。"""
     key = tikhub_api_key()
@@ -233,8 +253,8 @@ def request(
     payload_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
     last_error = "未知错误"
 
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        proxy = current_proxy()
+    for attempt in range(1, max_attempts + 1):
+        proxy = current_proxy() if probe_proxy else current_proxy(probe=False)
         headers = {
             "Authorization": f"Bearer {key}",
             "User-Agent": BROWSER_UA,
@@ -255,7 +275,7 @@ def request(
                     "请检查代理设置。",
                     status=403, body=raw[:300],
                 ) from exc
-            if exc.code in RETRYABLE_STATUS and attempt < MAX_ATTEMPTS:
+            if exc.code in RETRYABLE_STATUS and attempt < max_attempts:
                 last_error = f"HTTP {exc.code}"
                 time.sleep(RETRY_DELAYS[min(attempt - 1, len(RETRY_DELAYS) - 1)])
                 continue
@@ -266,9 +286,10 @@ def request(
             raise TikHubError(_explain_http(exc.code, raw), status=exc.code, body=raw[:300]) from exc
         except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
             # 网络路径可能变了（代理挂了 / 直连通了），强制重探一次
-            if attempt < MAX_ATTEMPTS:
+            if attempt < max_attempts:
                 last_error = f"{type(exc).__name__}"
-                detect_proxy(force=True, key=key)
+                if probe_proxy:
+                    detect_proxy(force=True, key=key)
                 time.sleep(RETRY_DELAYS[min(attempt - 1, len(RETRY_DELAYS) - 1)])
                 continue
             raise TikHubError(
@@ -287,13 +308,17 @@ def request(
         if code == 200:
             _remember_account(True)
             return payload
+        if code == 402 or "insufficient balance" in _compact_error(payload).lower():
+            _remember_account(False, "balance", "TikHub 余额不足")
+            raise TikHubError("TikHub 余额不足，请充值", status=402)
         business = str(code or "")
-        if business.isdigit() and int(business) in RETRYABLE_STATUS and attempt < MAX_ATTEMPTS:
+        if business.isdigit() and int(business) in RETRYABLE_STATUS and attempt < max_attempts:
             last_error = f"业务码 {business}"
             time.sleep(RETRY_DELAYS[min(attempt - 1, len(RETRY_DELAYS) - 1)])
             continue
         raise TikHubError(
-            f"TikHub 未返回数据（代码 {business or '未知'}）：{_compact_error(payload)}"
+            f"TikHub 未返回数据（代码 {business or '未知'}）：{_compact_error(payload)}",
+            status=int(business) if business.isdigit() else 0
         )
 
     raise TikHubError(f"TikHub 请求重试耗尽：{last_error}")
