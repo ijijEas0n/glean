@@ -47,8 +47,8 @@ class RTests(unittest.TestCase):
                    *[{'id': str(i), 'interactions': i*10} for i in range(1, 6)],
                    {'id': '1', 'interactions': 99999}, {'id': 'missing', 'interactions': None}]
         value = r.score(candidate(likes=100), history)
-        self.assertEqual((value['samples'], value['median'], value['value'], value['grade']), (6, 25, 4, '偏爆'))
-        value = r.score(candidate(likes=300), history[2:])
+        self.assertEqual((value['samples'], value['median'], value['value'], value['grade']), (6, 25, 4.8, '偏爆'))
+        value = r.score(candidate(likes=300, collects=0), history[2:])
         self.assertEqual((value['median'], value['value'], value['grade']), (30, 10, '明显爆'))
         self.assertIn('零互动 1', r.score(candidate(), history)['distribution'])
 
@@ -67,13 +67,13 @@ class RTests(unittest.TestCase):
     def test_twenty_sample_window_and_platform_metrics(self):
         result = r.score(candidate(), [{'id': str(i), 'interactions': i} for i in range(30)])
         self.assertEqual((result['samples'], result['median']), (20, 9.5))
-        self.assertEqual(r.interactions(candidate()), 100)
+        self.assertEqual(r.interactions(candidate()), 120)
         self.assertEqual(r.interactions(candidate(platform='xiaohongshu')), 120)
         self.assertIsNone(r.interactions(candidate(platform='xiaohongshu', collects=None)))
         result = r.score(candidate(likes=None), [{'id': str(i), 'interactions': 10} for i in range(5)])
         self.assertEqual(result['grade'], '互动待核')
         for likes, grade in [(0, '平常'), (29, '平常'), (30, '偏爆'), (100, '明显爆')]:
-            self.assertEqual(r.score(candidate(likes=likes), [{'id':str(i), 'interactions':10} for i in range(5)])['grade'], grade)
+            self.assertEqual(r.score(candidate(likes=likes, collects=0), [{'id':str(i), 'interactions':10} for i in range(5)])['grade'], grade)
 
     def test_estimate_free_and_author_dedup(self):
         plan = self.plan([candidate(), candidate('998')])

@@ -25,16 +25,12 @@ _PLANS = {}
 
 
 def interactions(row):
-    likes = viral.count(row.get('likes'))
-    collects = viral.count(row.get('collects'))
-    if likes is None or (row['platform'] == 'xiaohongshu' and collects is None):
-        return None
-    return likes + (collects if row['platform'] == 'xiaohongshu' else 0)
+    return viral.interactions(row)
 
 
 def score(row, history):
     # 按时间降序整理过的历史，排除本条、去重；缺指标不冒充 0。
-    seen, values = set(), []
+    seen, values, missing = set(), [], 0
     for other in history:
         biz = other['id']
         if biz == row['id'] or biz in seen:
@@ -43,6 +39,7 @@ def score(row, history):
         value = other.get('interactions')
         if value is not None:
             values.append(value)
+            missing += bool(other.get("collect_missing"))
         if len(values) == WINDOW:
             break
     base = median(values) if values else None
@@ -50,6 +47,8 @@ def score(row, history):
               'distribution': f'互动范围 {min(values):g}–{max(values):g}，零互动 {values.count(0)} 条' if values else '无可用近作',
               'grade': '样本不足', 'note': '至少需要 5 条其它作品的完整互动指标'}
     current = interactions(row)
+    notes = viral.metric_notes(row)
+    result['metric_notes'] = notes + ([f'近作收藏缺失 {missing} 条（按 0）'] if missing else [])
     if len(values) < MIN_SAMPLES:
         return result
     if base == 0:
@@ -58,7 +57,7 @@ def score(row, history):
         return {**result, 'grade': '互动待核', 'note': '本条互动指标缺失，无法计算 R'}
     ratio = current / base
     return {**result, 'value': round(ratio, 2), 'grade': '明显爆' if ratio >= R_HIGH else '偏爆' if ratio >= R_MEDIUM else '平常',
-            'note': '抖音按赞，小红书按赞+藏；本条使用预览时互动快照'}
+            'note': '两平台按赞+藏；抖音收藏缺失按 0；本条使用预览时互动快照'}
 
 
 def _cache():
@@ -74,13 +73,15 @@ def _cache():
                      not math.isfinite(w['interactions']) or w['interactions'] < 0))
                     for w in v['works']) for v in data.values()):
             raise ValueError()
+        for author, entry in data.items():
+            entry.setdefault('platform', author.split(':', 1)[0])
         return data
     except (ValueError, TypeError) as exc:
         raise ValueError('R 缓存格式错误，请检查 data/viral-r.json；未覆盖原文件') from exc
 
 
 def _fresh(entry):
-    return bool(entry and 0 <= time.time() - entry['fetched_at'] < TTL)
+    return bool(entry and (entry.get('metric_version') == 2 or entry.get('platform') == 'xiaohongshu') and 0 <= time.time() - entry['fetched_at'] < TTL)
 
 
 def _save(data):
@@ -155,7 +156,7 @@ def _page(platform, payload):
         if row is None:
             raise ValueError('作者近作作品 ID 结构未识别，未计算 R')
         works.append({'id': row['id'], 'interactions': interactions(row),
-                      'published_at': row.get('published_at')})
+                      'published_at': row.get('published_at'), 'collect_missing': bool(viral.metric_notes(row))})
     more = str(data.get('has_more', False)).lower() not in ('0', 'false', 'none', '')
     cursor = data.get('max_cursor') if platform == 'douyin' else data.get('cursor') or (rows[-1].get('cursor') or rows[-1].get('id') if rows else '')
     return works, more, cursor
@@ -200,7 +201,7 @@ def execute(payload):
                         cursor = next_cursor
                     # 置顶作品按发布时间重排；缺时间放末尾，同时间保留接口顺序并提示。
                     works.sort(key=lambda w: (viral.published(w.get('published_at')).timestamp() if viral.published(w.get('published_at')) else 0), reverse=True)
-                    entry = {'fetched_at': time.time(), 'works': works,
+                    entry = {'metric_version': 2, 'platform': platform, 'fetched_at': time.time(), 'works': works,
                              'pages_limit': plan['pages'],
                              'note': '只按本次返回近作计算，最多 20 条其它作品；非全量账号统计。' +
                              (' 部分作品缺日期，近作顺序待核。' if any(not viral.published(w.get('published_at')) for w in works) else '')}

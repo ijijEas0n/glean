@@ -1,6 +1,6 @@
 """低粉爆款候选筛选（非预测）。
 
-抖音互动仅点赞，小红书互动为点赞+收藏。倍数=互动/max(粉丝,1)。
+两平台互动均为点赞+收藏；抖音收藏缺失按 0 并注明。倍数=互动/max(粉丝,1)。
 评分纯函数不访问网络；拉源、补粉、查本地存在性单独处理。
 未知粉丝、缺失日期留在参考池并标待核，不从作品 ID 猜时间。
 """
@@ -31,7 +31,7 @@ DEFAULTS = {
     "douyin_sources": ["search", "lowfan"],
     "max_pages": 2,
     "douyin": {
-        "max_fans": 50000, "min_interactions": 1000, "min_multiplier": 0.3,
+        "max_fans": 50000, "min_interactions": 1200, "min_multiplier": 0.3,
         "max_age_days": 14, "allow_missing_date": False, "keywords": ["AI"],
         "source": "search",
         "path": "/api/v1/douyin/search/fetch_video_search_v2",
@@ -46,10 +46,10 @@ DEFAULTS = {
 }
 THRESHOLDS = ("max_fans", "min_interactions", "min_multiplier", "max_age_days")
 
-TIER_NAMES = ("最严", "严选", "适中", "宽松", "最松")
+TIER_NAMES = ("最严", "较严", "适中", "宽松", "最松")
 PRESETS = {
-    "douyin": ((30000, 20000, 5, 7), (50000, 10000, 3, 14),
-               (50000, 3000, 1, 14), (50000, 1000, 0.3, 14), (100000, 300, 0.1, 30)),
+    "douyin": ((30000, 24000, 5, 7), (50000, 12000, 3, 14),
+               (50000, 3600, 1, 14), (50000, 1200, 0.3, 14), (100000, 360, 0.1, 30)),
     "xiaohongshu": ((5000, 2000, 2, 7), (10000, 1000, 1, 14),
                     (10000, 500, 0.5, 14), (10000, 300, 0.1, 14), (30000, 100, 0.05, 30)),
 }
@@ -140,17 +140,27 @@ def published(value: Any) -> datetime | None:
         return None
 
 
+def interactions(item: dict) -> int | None:
+    """同一口径供四门槛与 R 使用；仅抖音允许缺收藏按零。"""
+    likes, collects = count(item.get("likes")), count(item.get("collects"))
+    if likes is None or (item.get("platform") == "xiaohongshu" and collects is None):
+        return None
+    return likes + (collects or 0)
+
+
+def metric_notes(item: dict) -> list[str]:
+    return ["收藏缺失"] if item.get("platform") == "douyin" and count(item.get("collects")) is None else []
+
+
 def score_item(item: dict, rules: dict | None = None, *, now: datetime | None = None) -> dict:
-    """返回新对象；抖点赞、红赞+藏；比较未经四舍五入的倍数与天数。"""
+    """返回新对象；两平台赞+藏；比较未经四舍五入的倍数与天数。"""
     platform = item.get("platform")
     if platform not in PLATFORMS:
         raise ValueError("低粉爆款仅支持抖音和小红书")
     rules = {**DEFAULTS[platform], **(rules or {})}
-    fans, likes = count(item.get("fans")), count(item.get("likes"))
-    collects = count(item.get("collects"))
-    interactions = likes if platform == "douyin" else (
-        likes + collects if likes is not None and collects is not None else None)
-    multiplier = interactions / max(fans, 1) if fans is not None and interactions is not None else None
+    fans = count(item.get("fans"))
+    interaction_count = interactions(item)
+    multiplier = interaction_count / max(fans, 1) if fans is not None and interaction_count is not None else None
     stamp = published(item.get("published_at"))
     current = now or datetime.now(timezone.utc)
     if current.tzinfo is None:
@@ -161,9 +171,9 @@ def score_item(item: dict, rules: dict | None = None, *, now: datetime | None = 
         reasons.append("粉丝待核")
     elif fans > rules["max_fans"]:
         reasons.append("粉丝超上限")
-    if interactions is None:
+    if interaction_count is None:
         reasons.append("互动待核")
-    elif interactions < rules["min_interactions"]:
+    elif interaction_count < rules["min_interactions"]:
         reasons.append("互动不足")
     if multiplier is not None and multiplier < rules["min_multiplier"]:
         reasons.append("倍数不足")
@@ -173,10 +183,10 @@ def score_item(item: dict, rules: dict | None = None, *, now: datetime | None = 
         reasons.append("日期异常")
     elif age > rules["max_age_days"]:
         reasons.append("超出本地天数")
-    return {**item, "fans": fans, "interactions": interactions, "multiplier": multiplier,
+    return {**item, "fans": fans, "interactions": interaction_count, "metric_notes": metric_notes(item), "multiplier": multiplier,
             "published_at": stamp.isoformat() if stamp else None, "age_days": age,
             "passed": not reasons, "fail_reasons": reasons,
-            "pending": fans is None or interactions is None or age is None}
+            "pending": fans is None or interaction_count is None or age is None}
 
 
 def passes_threshold(item: dict, rules: dict | None = None, *, now: datetime | None = None) -> bool:
@@ -392,12 +402,12 @@ def normalize(platform: str, obj: dict) -> dict | None:
             "fans": count(pick(obj, "fans_cnt", "fans")) if platform == "douyin" and any(k in obj for k in ("fans_cnt", "fans"))
                     else count(pick(author, "follower_count", "fans", "fans_count", "followers")),
             "likes": count(pick(stats, "digg_count", "like_cnt", "liked_count", "likes")),
-            "collects": count(pick(stats, "collected_count", "collected", "collect_count", "collects")),
+            "collects": count(pick(stats, "collect_count", "collect_cnt", "collected_count", "collected", "collects")),
             "published_at": pick(obj, "publish_time", "create_time", "time", "timestamp", "published_at"),
             "raw": {"id": biz, "type": str(obj.get("type") or ""),
                     "metrics_source": "search_or_lowfan", "fans_source": "search",
                     "likes": count(pick(stats, "digg_count", "like_cnt", "liked_count", "likes")),
-                    "collects": count(pick(stats, "collected_count", "collected", "collect_count", "collects"))}}
+                    "collects": count(pick(stats, "collect_count", "collect_cnt", "collected_count", "collected", "collects"))}}
 
 
 def profile_fans(payload: dict) -> int | None:

@@ -62,3 +62,13 @@
 .viral-card-actions{gap:8px;margin-top:6px}
 .viral-card-actions button{font-size:11px;white-space:normal;text-align:left}
 .viral-grid .preview-card.is-disabled{opacity:1}
+
+.viral-advanced-body{display:grid;gap:14px;padding:16px 0;min-width:0}
+.viral-advanced .viral-advanced-body>label{max-width:none}
+.viral-skip{grid-column:1/-1;min-width:0}
+.viral-skip>summary{cursor:pointer;padding:12px 0}
+.viral-grid .viral-verdict{font-size:14px;color:var(--accent)}
+.viral-grid .viral-reason{font-size:12px;line-height:1.65;margin:4px 0;overflow-wrap:anywhere}
+.viral-details{font-size:12px;min-width:0}
+.viral-details summary{cursor:pointer;padding:8px 0}
+.viral-details .viral-card-meta{white-space:normal;overflow-wrap:anywhere}

@@ -76,7 +76,7 @@ class ViralTests(unittest.TestCase):
         self.assertEqual(red['interactions'], 1100)
         self.assertEqual(red['multiplier'], 1.1)
         self.assertTrue(red['passed'])
-        self.assertEqual(viral.score_item({**row, 'platform': 'douyin'}, now=NOW)['interactions'], 800)
+        self.assertEqual(viral.score_item({**row, 'platform': 'douyin'}, now=NOW)['interactions'], 1100)
         self.assertFalse(viral.passes_threshold({**row, 'platform': 'xiaohongshu', 'collects': None}, now=NOW))
 
 
@@ -529,7 +529,7 @@ class ViralTests(unittest.TestCase):
 
     def test_presets_default_and_config_tier(self):
         expected = {
-            'douyin': [(30000,20000,5,7),(50000,10000,3,14),(50000,3000,1,14),(50000,1000,.3,14),(100000,300,.1,30)],
+            'douyin': [(30000,24000,5,7),(50000,12000,3,14),(50000,3600,1,14),(50000,1200,.3,14),(100000,360,.1,30)],
             'xiaohongshu': [(5000,2000,2,7),(10000,1000,1,14),(10000,500,.5,14),(10000,300,.1,14),(30000,100,.05,30)]}
         self.assertEqual(self.settings()['tier'], 3)
         from server.config import DEFAULT_CONFIG
@@ -542,9 +542,9 @@ class ViralTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.settings(tier=tier)
         with patch.object(viral, 'load_config', return_value={'viral': {'tier': 2}}):
-            self.assertEqual(self.settings()['douyin']['min_interactions'], 3000)
+            self.assertEqual(self.settings()['douyin']['min_interactions'], 3600)
         with patch.object(viral, 'load_config', return_value={'viral': {'douyin': {'min_interactions': 99}}}):
-            self.assertEqual(self.settings(tier=1)['douyin']['min_interactions'], 10000)
+            self.assertEqual(self.settings(tier=1)['douyin']['min_interactions'], 12000)
 
     def test_same_batch_strict_zero_loose_has_candidates(self):
         self.post.side_effect = None
